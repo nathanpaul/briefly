@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+build/
+dist/
+.venv/
+venv/
+
+# Pipeline working data (per-meeting; never source-controlled)
+recordings/
+processed/
+transcripts/
+
+# Local scratch
+*.part
+.DS_Store

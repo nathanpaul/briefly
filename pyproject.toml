@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "briefly"
+version = "0.1.0"
+description = "Meeting capture → transcript → per-person summary → Claude vault enrichment"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+briefly = "briefly.cli:main"
+briefly-capture = "briefly.cli:capture_main"
+
+[tool.setuptools.packages.find]
+include = ["briefly*"]
+
+[tool.setuptools.package-data]
+briefly = ["schemas/*.json"]
