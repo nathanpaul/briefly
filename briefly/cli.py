@@ -1,7 +1,12 @@
-"""`briefly` CLI. Subcommand groups per pipeline stage; capture is first.
+"""`briefly` CLI — top-level dispatch to per-stage entrypoints.
 
-  briefly capture preflight
-  briefly capture record --duration <sec> [--attendees "a,b"] [--no-preflight]
+  briefly capture     preflight | record --duration <sec> ...
+  briefly preprocess  --meeting-id <id> ...
+  briefly merge       --meeting-id <id> ...
+  briefly summarize   --meeting-id <id> ...
+
+Each stage owns its own argparse (prog="briefly <stage>"); see that stage's
+--help and the matching docs/*-contract.md.
 """
 from __future__ import annotations
 
@@ -10,6 +15,17 @@ import sys
 
 from .audio import capture as cap
 from .config import CaptureConfig
+
+USAGE = """briefly <command> [options]
+
+commands:
+  capture     record a meeting's two soundcard channels -> recordings/<id>/
+  preprocess  AEC + de-clip + resample to 16 kHz mono   -> processed/<id>/
+  merge       whisper + diarization (+ speakers)        -> transcript.json
+  summarize   transcript.json (Claude)                  -> notes.md
+
+run `briefly <command> --help` for command options.
+"""
 
 
 def _add_common(sp: argparse.ArgumentParser) -> None:
@@ -28,27 +44,19 @@ def _config_from(args: argparse.Namespace) -> CaptureConfig:
     return cfg
 
 
-def _build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(prog="briefly", description="Briefly meeting pipeline")
-    sub = p.add_subparsers(dest="cmd", required=True)
-
-    capp = sub.add_parser("capture", help="record a meeting's two soundcard channels")
-    csub = capp.add_subparsers(dest="capcmd", required=True)
-
+def _capture_main(argv: list[str] | None) -> int:
+    p = argparse.ArgumentParser(prog="briefly capture",
+                                description="record a meeting's two soundcard channels")
+    csub = p.add_subparsers(dest="capcmd", required=True)
     pf = csub.add_parser("preflight", help="check devices, signal, and mic permission")
     _add_common(pf)
-
     rec = csub.add_parser("record", help="record for a fixed duration")
     _add_common(rec)
     rec.add_argument("--duration", type=float, required=True)
     rec.add_argument("--attendees", default="")
     rec.add_argument("--mode", default=None)
     rec.add_argument("--no-preflight", action="store_true")
-    return p
-
-
-def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    args = p.parse_args(argv)
     cfg = _config_from(args)
     try:
         if args.capcmd == "preflight":
@@ -58,7 +66,6 @@ def main(argv: list[str] | None = None) -> int:
                       f"max {info['max_dbfs']} dB  ({state})")
             print("preflight OK")
             return 0
-
         if args.capcmd == "record":
             attendees = [a.strip() for a in args.attendees.split(",") if a.strip()]
             manifest, mdir = cap.record(
@@ -84,5 +91,26 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv or argv[0] in ("-h", "--help"):
+        print(USAGE)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "capture":
+        return _capture_main(rest)
+    if cmd == "merge":
+        from .merge import main as merge_main
+        return merge_main(rest)
+    if cmd == "preprocess":
+        from .audio.preprocess import main as preprocess_main
+        return preprocess_main(rest)
+    if cmd == "summarize":
+        from .summarize import main as summarize_main
+        return summarize_main(rest)
+    print(f"unknown command: {cmd!r}\n\n{USAGE}", file=sys.stderr)
+    return 2
+
+
 def capture_main() -> int:
-    return main(["capture", *sys.argv[1:]])
+    return _capture_main(sys.argv[1:])

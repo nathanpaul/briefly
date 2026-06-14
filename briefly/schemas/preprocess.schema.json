@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://briefly/schemas/preprocess.schema.json",
+  "title": "Briefly preprocess report (preprocess.json)",
+  "description": "Records what the preprocess stage measured and applied (AEC + de-clip + normalize + 16 kHz resample). See docs/preprocess-contract.md.",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "meeting_id",
+    "generated_at",
+    "aec_enabled",
+    "delay_applied_sec",
+    "delay_source",
+    "estimated_echo_reduction_db",
+    "normalize_target",
+    "resample_rate",
+    "channels",
+    "tool",
+    "params",
+    "warnings"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "meeting_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "generated_at": {"type": "string"},
+    "aec_enabled": {
+      "type": "boolean",
+      "description": "Whether reference-based AEC was actually applied to the mic (false when disabled, line silent, or backend missing)."
+    },
+    "delay_applied_sec": {
+      "type": "number",
+      "description": "line→mic alignment delay actually used for AEC."
+    },
+    "delay_source": {"enum": ["meeting.json", "xcorr", "meeting.json+xcorr"]},
+    "estimated_echo_reduction_db": {
+      "type": ["number", "null"],
+      "description": "Drop in the mic's correlation-with-line energy after AEC; null when AEC not applied."
+    },
+    "normalize_target": {
+      "type": "object",
+      "required": ["type", "value_dbfs"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {"enum": ["peak", "lufs"]},
+        "value_dbfs": {"type": "number"}
+      }
+    },
+    "resample_rate": {"type": "integer"},
+    "channels": {
+      "type": "object",
+      "required": ["mic", "line"],
+      "additionalProperties": false,
+      "properties": {
+        "mic": {"$ref": "#/$defs/channel"},
+        "line": {"$ref": "#/$defs/channel"}
+      }
+    },
+    "tool": {
+      "type": "object",
+      "required": ["aec", "resample", "declip"],
+      "additionalProperties": true,
+      "properties": {
+        "aec": {"type": "string"},
+        "resample": {"type": "string"},
+        "declip": {"type": "string"}
+      }
+    },
+    "params": {
+      "type": "object",
+      "required": ["aec_enabled", "normalize_target", "resample_rate", "declip"],
+      "additionalProperties": true,
+      "properties": {
+        "aec_enabled": {"type": "boolean"},
+        "normalize_target": {"type": "string"},
+        "resample_rate": {"type": "integer"},
+        "declip": {"type": "boolean"},
+        "highpass_hz": {"type": "integer"},
+        "denoise": {"type": "boolean"},
+        "xcorr_refine": {"type": "boolean"}
+      }
+    },
+    "warnings": {"type": "array", "items": {"type": "string"}}
+  },
+  "$defs": {
+    "levels": {
+      "type": "object",
+      "required": ["mean_dbfs", "peak_dbfs", "clipping_detected"],
+      "additionalProperties": false,
+      "properties": {
+        "mean_dbfs": {"type": ["number", "null"]},
+        "peak_dbfs": {"type": ["number", "null"]},
+        "clipping_detected": {"type": "boolean"}
+      }
+    },
+    "channel": {
+      "type": "object",
+      "required": ["before", "after", "aec_applied"],
+      "additionalProperties": false,
+      "properties": {
+        "before": {"$ref": "#/$defs/levels"},
+        "after": {"$ref": "#/$defs/levels"},
+        "aec_applied": {"type": "boolean"}
+      }
+    }
+  }
+}
