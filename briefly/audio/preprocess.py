@@ -301,7 +301,7 @@ def _run_aec(mic_path: Path, line_path: Path, delay_sec: float,
     available, backend = _aec_backend_available()
     if not available:
         warnings.append(
-            "aec_enabled but numpy is not installed (pip install 'briefly[aec]'); "
+            "aec_enabled but no AEC backend (numpy) installed (pip install 'briefly[aec]'); "
             "falling back to passthrough — mic NOT echo-cancelled."
         )
         _ffmpeg_copy(mic_path, out_path, cfg)
