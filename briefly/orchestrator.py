@@ -166,6 +166,8 @@ _ENV = {
 
 
 def load_config(path: str | None, overrides: dict) -> PipelineConfig:
+    from .dotenv import load_dotenv
+    load_dotenv()  # populate BRIEFLY_* from ./.env (does not override real env vars)
     data: dict = {}
     if path:
         data.update(json.loads(Path(path).read_text(encoding="utf-8")))

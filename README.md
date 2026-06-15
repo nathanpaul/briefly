@@ -30,12 +30,11 @@ re-runnable; `briefly run` skips stages whose output already exists.
   [vault-template/](vault-template/); set the `40-Personal` OS guard per the vault README).
 
 ## Configure
-Set service URLs via flags, env vars (`BRIEFLY_WHISPER_URL`, `BRIEFLY_DIARIZE_URL`,
-`BRIEFLY_VAULT_DIR`, …), or a JSON config — see [briefly.example.json](briefly.example.json):
-
-```sh
-briefly run --meeting-id <id> --config briefly.json
-```
+`briefly run` / `briefly watch` auto-load a **`.env`** in the working directory (gitignored;
+copy [`.env.example`](.env.example)). Real env vars and CLI flags override it. Keys:
+`BRIEFLY_DIARIZE_URL` (HTTP), `BRIEFLY_WHISPER_HOST` + `BRIEFLY_WHISPER_PORT` (Wyoming/TCP —
+wyoming-whisper has no HTTP route), `BRIEFLY_VAULT_DIR`, `BRIEFLY_DATA_ROOT`, … A JSON config
+([briefly.example.json](briefly.example.json), `--config`) also works.
 
 ## Run a meeting
 

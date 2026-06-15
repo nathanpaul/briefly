@@ -16,3 +16,6 @@ transcripts/
 # Local scratch
 *.part
 .DS_Store
+
+# Local secrets / endpoints (.env.example is the committed template)
+.env
