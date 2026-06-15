@@ -1,0 +1,44 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# Briefly's test suite is fully self-contained: whisper / diarization / Claude are all
+# faked, so CI needs no services and no Docker — just Python + ffmpeg + numpy.
+# It runs on macOS because the capture stage (and the ffmpeg-backed preprocess/capture
+# tests) assume the Homebrew ffmpeg at /opt/homebrew/bin/ffmpeg — which is exactly where
+# `brew install ffmpeg` lands on the runner.
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (Homebrew → /opt/homebrew/bin/ffmpeg)
+        run: brew install ffmpeg
+        env:
+          HOMEBREW_NO_AUTO_UPDATE: '1'
+          HOMEBREW_NO_INSTALL_CLEANUP: '1'
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install Briefly + extras
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e '.[aec,whisper,summarize]'   # numpy AEC + Wyoming + Claude SDK
+
+      - name: Run the test suite
+        run: python -m unittest discover -s tests -t . -v
