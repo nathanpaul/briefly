@@ -77,9 +77,9 @@ class SummarizeConfig:
     # Above this many input tokens, map-reduce the transcript. With a 1M-context model
     # this is rarely hit; chunking is approximate (token≈chars/4, no SDK dependency).
     chunk_threshold_tokens: int = 150000
-    # client/proposal are not known at capture; left empty for the human/enrich stage
-    # unless provided here. Stored as wikilink strings (e.g. "[[Acme MOC]]") or "".
-    client: str = ""
+    # project/proposal are not known at capture; left empty for the human/enrich stage
+    # unless provided here. Stored as wikilink strings (e.g. "[[Apollo MOC]]") or "".
+    project: str = ""
     proposal: str = ""
 
 
@@ -270,7 +270,7 @@ Produce, conforming to the provided JSON schema:
   points of what that person said/contributed; `questions` is the questions THAT person \
   raised (empty array if none).
 - open_questions: the aggregated questions still open across the meeting, each with an \
-  optional `owner` ("us", "client", or a name).
+  optional `owner` ("us", "them", or a name).
 - headline (optional): a single-line summary of the meeting.
 - decisions (optional): cross-cutting decisions that were made.
 
@@ -369,9 +369,9 @@ def _title(brief: dict, transcript: Transcript, cfg: SummarizeConfig) -> str:
     headline = (brief.get("headline") or "").strip()
     if headline:
         return headline
-    client_plain = cfg.client.strip().strip("[]") if cfg.client else ""
-    if client_plain:
-        return f"{client_plain} — {transcript.date} meeting"
+    project_plain = cfg.project.strip().strip("[]") if cfg.project else ""
+    if project_plain:
+        return f"{project_plain} — {transcript.date} meeting"
     return transcript.meeting_id
 
 
@@ -410,7 +410,7 @@ def render_notes(brief: dict, transcript: Transcript, manifest: MeetingManifest,
         "type: meeting",
         f"meeting_id: {transcript.meeting_id}",
         f"date: {transcript.date}",
-        f"client: {_yaml_scalar(cfg.client)}",
+        f"project: {_yaml_scalar(cfg.project)}",
         f"attendees: {_yaml_list(list(manifest.attendees))}",
         f"proposal: {_yaml_scalar(cfg.proposal)}",
         "status: draft",

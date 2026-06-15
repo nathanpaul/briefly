@@ -100,8 +100,8 @@ def _write_inputs(root: Path, transcript: Transcript, manifest: MeetingManifest,
         transcripts_dir=str(root / "transcripts"),
         recordings_dir=str(root / "recordings"),
         vault_dir=str(root / "vault"),
-        client="[[Acme MOC]]",
-        proposal="[[Acme-AWS-Migration]]",
+        project="[[Apollo MOC]]",
+        proposal="[[Apollo-Platform-Migration]]",
     )
 
 
@@ -123,7 +123,7 @@ def _fake_client(brief: dict):
 
 class TestGoldenRender(unittest.TestCase):
     def setUp(self):
-        self.cfg = S.SummarizeConfig(client="[[Acme MOC]]", proposal="[[Acme-AWS-Migration]]")
+        self.cfg = S.SummarizeConfig(project="[[Apollo MOC]]", proposal="[[Apollo-Platform-Migration]]")
         self.transcript = _transcript()
         self.manifest = _manifest()
         self.note = S.render_notes(S.reconcile_brief(_full_brief(), self.transcript),
@@ -134,9 +134,9 @@ class TestGoldenRender(unittest.TestCase):
         self.assertIn("type: meeting", fm)
         self.assertIn("meeting_id: 01J9ZC8Q9F7Y3K2N5R6T8W0X1Z", fm)
         self.assertIn("date: 2026-06-14", fm)
-        self.assertIn('client: "[[Acme MOC]]"', fm)
+        self.assertIn('project: "[[Apollo MOC]]"', fm)
         self.assertIn('attendees: ["[[Jane Doe]]"]', fm)
-        self.assertIn('proposal: "[[Acme-AWS-Migration]]"', fm)
+        self.assertIn('proposal: "[[Apollo-Platform-Migration]]"', fm)
         self.assertIn("status: draft", fm)
         self.assertIn("partial: false", fm)
         self.assertIn("tags: [meeting]", fm)

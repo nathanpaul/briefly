@@ -1,6 +1,6 @@
 """Orchestrator — chain the file-based stages for one meeting_id:
 
-    preprocess -> transcribe -> diarize -> merge -> [name speakers] -> summarize -> enrich
+    preprocess -> diarize -> transcribe -> merge -> [name speakers] -> summarize -> enrich
 
 Each stage reads the previous stage's files and writes its own; a stage is SKIPPED if its
 output already exists (resumable) unless --force. Default run stops after `merge` so the

@@ -17,10 +17,11 @@ missing AEC backend, very short audio) → warnings[] + stderr, exit 0. Missing/
 required input → non-zero exit, existing output left untouched.
 
 AEC backend is PLUGGABLE and OPTIONAL — it is lazy-imported INSIDE _run_aec so this module
-imports fine when the lib is absent. Recommended backend: `webrtc-audio-processing`
-(WebRTC AudioProcessing module; reference-based AEC, survives double-talk). Alternative:
-`speexdsp` / `speexdsp-python`. If aec_enabled but no backend is installed, we log a clear
-warning and fall back to passthrough (preprocess.json records aec_enabled=false + reason).
+imports fine when the lib is absent. The shipped backend is a numpy least-squares / Wiener
+FIR (briefly/audio/aec.py, backend label "wiener-numpy"; the `[aec]` extra = numpy>=1.24).
+webrtc-audio-processing / speexdsp are possible alternative backends but are NOT what ships.
+If aec_enabled but no backend is installed, we log a clear warning and fall back to
+passthrough (preprocess.json records aec_enabled=false + reason).
 """
 from __future__ import annotations
 

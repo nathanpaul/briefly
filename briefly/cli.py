@@ -25,8 +25,8 @@ commands:
   watch       auto-run the pipeline when a new meeting is captured
   capture     record (record --duration | start/stop) two soundcard channels
   preprocess  AEC + de-clip + resample to 16 kHz mono   -> processed/<id>/
-  transcribe  Whisper cluster (both channels)           -> *.whisper.json
   diarize     pyannote service (line channel)           -> line.diarization.json
+  transcribe  wyoming-whisper (diarization-guided)      -> *.whisper.json
   merge       whisper + diarization (+ speakers)        -> transcript.json
   summarize   transcript.json (Claude)                  -> notes.md
   enrich      enrich notes.md against the vault (Claude Code)

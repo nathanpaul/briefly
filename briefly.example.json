@@ -1,6 +1,6 @@
 {
   "data_root": ".",
-  "vault_dir": "/path/to/your/Obsidian/Consulting",
+  "vault_dir": "/path/to/your/Obsidian/Projects",
   "whisper_host": "localhost",
   "whisper_port": 10300,
   "diarize_url": "https://speaker-diarization.example.io/diarize",

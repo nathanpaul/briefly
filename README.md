@@ -71,8 +71,8 @@ briefly run --from summarize --to enrich --force
 Instead of running `briefly run` by hand, run the watcher — it processes each meeting the
 moment capture finalizes its `meeting.json` (single-worker, resumable, idempotent):
 ```sh
-briefly watch --config briefly.json                  # to=merge (stops for speaker naming)
-briefly watch --to enrich --config briefly.json      # fully unattended (keeps Speaker_N labels)
+briefly watch                  # to=merge (stops for speaker naming)
+briefly watch --to enrich      # fully unattended (keeps Speaker_N labels)
 ```
 
 ## Test
