@@ -61,12 +61,20 @@ summarize,enrich}` — run `briefly <cmd> --help`.
 
 ## Test
 ```sh
-python3 -m unittest discover -s tests -t .
+python3 -m unittest discover -s tests -t .          # stdlib only
+pip install -e '.[aec]' && python3 -m unittest discover -s tests -t .   # + numpy AEC tests
 ```
 
+## Services (k8s-homelab)
+- **Diarization:** `https://speaker-diarization.example.io/diarize` (LAN). Dev:
+  `kubectl -n speaker-diarization port-forward svc/speaker-diarization 8080:80`. See
+  [knowledge/cluster/homelab-services.md](knowledge/cluster/homelab-services.md).
+- **Whisper:** `wyoming-whisper` — **Wyoming protocol over TCP :10300, text-only** (not HTTP).
+
 ## Status
-Built + tested (104 tests): capture, preprocess, transcribe/diarize clients, merge, summarize,
-enrich, orchestrator. **Verify before first live run:** your Whisper cluster's API shape
-(default assumes OpenAI-compatible `verbose_json`; set `whisper_format` / add a normalizer if
-it differs). **Follow-ups:** real AEC backend (currently graceful passthrough), capture
-`start`/`stop` daemon + aggregate mode, and an auto-trigger (file-watch) instead of manual `run`.
+Built + tested (109 tests): capture, preprocess (**real numpy AEC** — `[aec]` extra; graceful
+passthrough without it), diarize client (fixed to the homelab service's `audio` field), merge,
+summarize, enrich, orchestrator. **Blocking for a live run:** the `transcribe` client assumes an
+HTTP OpenAI API, but the deployed Whisper is **Wyoming (TCP, no timestamps)** — needs a Wyoming
+client + diarization-guided transcription (planned, see homelab-services.md). **Other follow-ups:**
+capture `start`/`stop` daemon + aggregate mode; an auto-trigger (file-watch) instead of manual `run`.

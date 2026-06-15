@@ -32,7 +32,9 @@ def diarize_file(audio_path: str | Path, cfg: DiarizeConfig, post=None) -> dict:
         val = getattr(cfg, name)
         if val is not None:
             fields.append((name, str(val)))
-    raw = post(cfg.url, files=[("file", path.name, path.read_bytes(), "audio/wav")],
+    # The speaker-diarization service expects the multipart field named "audio"
+    # (FastAPI UploadFile `audio`) — see k8s-homelab speaker-diarization/app/main.py.
+    raw = post(cfg.url, files=[("audio", path.name, path.read_bytes(), "audio/wav")],
                fields=fields, timeout=cfg.timeout_sec)
     resp = json.loads(raw)
     if not isinstance(resp, dict) or "segments" not in resp:

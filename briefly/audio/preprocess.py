@@ -281,7 +281,9 @@ def _aec_backend_available() -> tuple[bool, str | None]:
     """
     import importlib.util  # stdlib
 
-    for mod in ("webrtc_audio_processing", "webrtcvad_aec", "speexdsp"):
+    if importlib.util.find_spec("numpy") is not None:
+        return True, "wiener-numpy"
+    for mod in ("webrtc_audio_processing", "speexdsp"):
         if importlib.util.find_spec(mod) is not None:
             return True, mod
     return False, None
@@ -299,32 +301,17 @@ def _run_aec(mic_path: Path, line_path: Path, delay_sec: float,
     available, backend = _aec_backend_available()
     if not available:
         warnings.append(
-            "aec_enabled but no AEC backend installed "
-            "(pip install webrtc-audio-processing or speexdsp); "
+            "aec_enabled but numpy is not installed (pip install 'briefly[aec]'); "
             "falling back to passthrough — mic NOT echo-cancelled."
         )
         _ffmpeg_copy(mic_path, out_path, cfg)
         return {"applied": False, "reduction_db": None, "backend": None}
-
-    # ---- Backend present: drive it here. Lazy import keeps stock Python clean. -----
-    try:  # pragma: no cover - exercised only with the optional backend installed
-        import importlib
-
-        importlib.import_module(backend)  # noqa: F401  (real wiring is backend-specific)
-        # A concrete integration would: load mic+line as int16 frames, feed `line` as the
-        # far-end/render signal and `mic` as the near-end/capture signal frame-by-frame to
-        # the canceller (10 ms frames at the native rate), collect the cleaned mic, and
-        # write it to out_path. Echo reduction = drop in mic energy correlated with the
-        # reference, before vs. after. Until a specific backend is pinned in pyproject, we
-        # do not guess its API; fall back to passthrough so behaviour stays deterministic.
-        warnings.append(
-            f"AEC backend {backend!r} detected but no concrete integration is wired; "
-            "passing the mic through unchanged. Pin the backend and wire _run_aec."
-        )
-        _ffmpeg_copy(mic_path, out_path, cfg)
-        return {"applied": False, "reduction_db": None, "backend": backend}
+    try:
+        from .aec import run_aec_file
+        return run_aec_file(mic_path, line_path, delay_sec, out_path)
     except Exception as e:  # noqa: BLE001 - never let AEC crash the stage
-        warnings.append(f"AEC backend {backend!r} failed ({e}); passthrough.")
+        warnings.append(f"AEC backend {backend!r} failed ({type(e).__name__}: {e}); "
+                        "passthrough — mic NOT echo-cancelled.")
         _ffmpeg_copy(mic_path, out_path, cfg)
         return {"applied": False, "reduction_db": None, "backend": backend}
 
