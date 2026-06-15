@@ -13,6 +13,7 @@ dependencies = []
 dev = ["pytest>=8"]
 aec = ["numpy>=1.24"]      # real reference-based echo cancellation (briefly.audio.aec)
 summarize = ["anthropic>=0.40"]
+whisper = ["wyoming>=1.5"]  # Wyoming TCP client for wyoming-whisper
 
 [project.scripts]
 briefly = "briefly.cli:main"

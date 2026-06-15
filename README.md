@@ -82,9 +82,10 @@ pip install -e '.[aec]' && python3 -m unittest discover -s tests -t .   # + nump
 - **Whisper:** `wyoming-whisper` — **Wyoming protocol over TCP :10300, text-only** (not HTTP).
 
 ## Status
-Built + tested (109 tests): capture, preprocess (**real numpy AEC** — `[aec]` extra; graceful
-passthrough without it), diarize client (fixed to the homelab service's `audio` field), merge,
-summarize, enrich, orchestrator. **Blocking for a live run:** the `transcribe` client assumes an
-HTTP OpenAI API, but the deployed Whisper is **Wyoming (TCP, no timestamps)** — needs a Wyoming
-client + diarization-guided transcription (planned, see homelab-services.md). **Other follow-ups:**
-capture `start`/`stop` daemon + aggregate mode; an auto-trigger (file-watch) instead of manual `run`.
+End-to-end built + tested: capture (`record` + `start`/`stop`), preprocess (**real numpy AEC** —
+`[aec]` extra; graceful passthrough without it), **diarization-guided transcription against
+wyoming-whisper** (`[whisper]` extra: Wyoming TCP client + VAD; line channel sliced by diarization
+turns, mic channel by VAD), diarize client, merge, summarize, enrich, the `run` orchestrator, and
+the `watch` auto-trigger. **Before a live run:** install extras (`pip install -e '.[aec,whisper,summarize]'`),
+port-forward both services (or use the cluster URLs), and confirm the `claude` CLI + your vault.
+**Follow-ups:** capture aggregate-device mode; a finer-grained sync-marker offset; launchd unit for `watch`.

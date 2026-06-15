@@ -77,8 +77,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--config")
     p.add_argument("--data-root")
     p.add_argument("--vault-dir")
-    p.add_argument("--whisper-url")
-    p.add_argument("--whisper-format")
+    p.add_argument("--whisper-host")
+    p.add_argument("--whisper-port", type=int)
     p.add_argument("--diarize-url")
     p.add_argument("--summarize-model")
     p.add_argument("--claude-path")
@@ -88,7 +88,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     cfg = load_config(args.config, {
         "data_root": args.data_root, "vault_dir": args.vault_dir,
-        "whisper_url": args.whisper_url, "whisper_format": args.whisper_format,
+        "whisper_host": args.whisper_host, "whisper_port": args.whisper_port,
         "diarize_url": args.diarize_url, "summarize_model": args.summarize_model,
         "claude_path": args.claude_path,
     })

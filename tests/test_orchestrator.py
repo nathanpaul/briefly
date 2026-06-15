@@ -52,6 +52,7 @@ def _fakes(calls: list):
 
     def fake_diarize(cfg, mid):
         calls.append("diarize")
+        cfg.tx(mid).mkdir(parents=True, exist_ok=True)   # diarize now runs before transcribe
         (cfg.tx(mid) / "line.diarization.json").write_text(json.dumps(LINE_DIAR))
 
     def fake_summarize(cfg, mid):
@@ -77,7 +78,7 @@ class TestOrchestrator(unittest.TestCase):
             cfg = PipelineConfig(data_root=str(root), vault_dir=str(root / "vault"))
             results = run_pipeline(cfg, MID, "preprocess", "enrich",
                                    runners=_fakes(calls), log=_QUIET)
-            self.assertEqual([s for s, _ in results], ["preprocess", "transcribe", "diarize",
+            self.assertEqual([s for s, _ in results], ["preprocess", "diarize", "transcribe",
                                                        "merge", "summarize", "enrich"])
             self.assertTrue(all(state == "ok" for _, state in results))
             # real merge produced a valid transcript with a "Me" turn and a Speaker_1 turn
@@ -104,8 +105,8 @@ class TestOrchestrator(unittest.TestCase):
             root = Path(td)
             _setup_meeting(root)
             cfg = PipelineConfig(data_root=str(root), vault_dir=str(root / "vault"))
-            # produce the merge inputs only
-            run_pipeline(cfg, MID, "preprocess", "diarize", runners=_fakes(calls), log=_QUIET)
+            # produce the merge inputs only (preprocess..transcribe covers diarize too)
+            run_pipeline(cfg, MID, "preprocess", "transcribe", runners=_fakes(calls), log=_QUIET)
             calls.clear()
             results = run_pipeline(cfg, MID, "merge", "merge", runners=_fakes(calls), log=_QUIET)
             self.assertEqual([s for s, _ in results], ["merge"])
@@ -121,7 +122,7 @@ class TestOrchestrator(unittest.TestCase):
             calls.clear()
             run_pipeline(cfg, MID, "preprocess", "transcribe", force=True,
                          runners=_fakes(calls), log=_QUIET)
-            self.assertEqual(calls, ["preprocess", "transcribe"])
+            self.assertEqual(calls, ["preprocess", "diarize", "transcribe"])
 
 
 if __name__ == "__main__":

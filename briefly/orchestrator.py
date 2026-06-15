@@ -17,17 +17,18 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-STAGES = ["preprocess", "transcribe", "diarize", "merge", "summarize", "enrich"]
+# diarize BEFORE transcribe: the Wyoming Whisper service is text-only, so we transcribe
+# the line channel per diarization turn (knowledge/cluster/homelab-services.md).
+STAGES = ["preprocess", "diarize", "transcribe", "merge", "summarize", "enrich"]
 
 
 @dataclass
 class PipelineConfig:
     data_root: str = "."                  # holds recordings/ processed/ transcripts/
     vault_dir: str = "vault"
-    whisper_url: str = "http://localhost:8000/v1/audio/transcriptions"
-    whisper_format: str = "openai"
-    whisper_model: str = "whisper-1"
-    diarize_url: str = "http://localhost:8080/diarize"
+    whisper_host: str = "localhost"       # wyoming-whisper TCP (port-forward or cluster DNS)
+    whisper_port: int = 10300
+    diarize_url: str = "https://speaker-diarization.example.io/diarize"
     summarize_model: str = "claude-opus-4-8"
     claude_path: str = "claude"
     ffmpeg_path: str = "/opt/homebrew/bin/ffmpeg"
@@ -67,8 +68,8 @@ def _run_preprocess(cfg: PipelineConfig, mid: str) -> None:
 def _run_transcribe(cfg: PipelineConfig, mid: str) -> None:
     from .clients.transcribe import TranscribeConfig, transcribe_meeting
     transcribe_meeting(cfg.proc(mid), cfg.tx(mid),
-                       TranscribeConfig(url=cfg.whisper_url, format=cfg.whisper_format,
-                                        model=cfg.whisper_model, timeout_sec=cfg.timeout_sec))
+                       TranscribeConfig(host=cfg.whisper_host, port=int(cfg.whisper_port),
+                                        timeout_sec=cfg.timeout_sec))
 
 
 def _run_diarize(cfg: PipelineConfig, mid: str) -> None:
@@ -158,8 +159,8 @@ def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "prepro
 
 _ENV = {
     "data_root": "BRIEFLY_DATA_ROOT", "vault_dir": "BRIEFLY_VAULT_DIR",
-    "whisper_url": "BRIEFLY_WHISPER_URL", "whisper_format": "BRIEFLY_WHISPER_FORMAT",
-    "whisper_model": "BRIEFLY_WHISPER_MODEL", "diarize_url": "BRIEFLY_DIARIZE_URL",
+    "whisper_host": "BRIEFLY_WHISPER_HOST", "whisper_port": "BRIEFLY_WHISPER_PORT",
+    "diarize_url": "BRIEFLY_DIARIZE_URL",
     "summarize_model": "BRIEFLY_SUMMARIZE_MODEL", "claude_path": "BRIEFLY_CLAUDE_PATH",
 }
 
@@ -172,6 +173,8 @@ def load_config(path: str | None, overrides: dict) -> PipelineConfig:
         if env in os.environ:
             data[field_name] = os.environ[env]
     data.update({k: v for k, v in overrides.items() if v is not None})
+    if "whisper_port" in data:
+        data["whisper_port"] = int(data["whisper_port"])  # env/config may pass a string
     known = PipelineConfig().__dict__
     return PipelineConfig(**{k: v for k, v in data.items() if k in known})
 
@@ -186,15 +189,15 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--config", help="JSON config file")
     p.add_argument("--data-root")
     p.add_argument("--vault-dir")
-    p.add_argument("--whisper-url")
-    p.add_argument("--whisper-format")
+    p.add_argument("--whisper-host")
+    p.add_argument("--whisper-port", type=int)
     p.add_argument("--diarize-url")
     p.add_argument("--summarize-model")
     p.add_argument("--claude-path")
     args = p.parse_args(argv)
     cfg = load_config(args.config, {
         "data_root": args.data_root, "vault_dir": args.vault_dir,
-        "whisper_url": args.whisper_url, "whisper_format": args.whisper_format,
+        "whisper_host": args.whisper_host, "whisper_port": args.whisper_port,
         "diarize_url": args.diarize_url, "summarize_model": args.summarize_model,
         "claude_path": args.claude_path,
     })
