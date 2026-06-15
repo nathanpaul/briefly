@@ -1,0 +1,10 @@
+# Briefly runtime dependencies for a live run (mirror pyproject.toml extras
+# [aec] + [whisper] + [summarize]). The core package itself is stdlib-only.
+#
+# This installs only the LIBRARIES. To also get the `briefly` command, prefer:
+#     pip install -e '.[aec,whisper,summarize]'
+# (or, after `pip install -r requirements.txt`, run stages via `python -m briefly ...`)
+
+numpy>=1.24       # [aec]       real reference-based echo cancellation (briefly.audio.aec)
+wyoming>=1.5      # [whisper]   Wyoming TCP client for wyoming-whisper transcription
+anthropic>=0.40   # [summarize] Claude API for the per-person meeting brief
