@@ -20,7 +20,8 @@ USAGE = """briefly <command> [options]
 
 commands:
   run         orchestrate the whole pipeline for one meeting_id
-  capture     record a meeting's two soundcard channels -> recordings/<id>/
+  watch       auto-run the pipeline when a new meeting is captured
+  capture     record (record --duration | start/stop) two soundcard channels
   preprocess  AEC + de-clip + resample to 16 kHz mono   -> processed/<id>/
   transcribe  Whisper cluster (both channels)           -> *.whisper.json
   diarize     pyannote service (line channel)           -> line.diarization.json
@@ -48,6 +49,21 @@ def _config_from(args: argparse.Namespace) -> CaptureConfig:
     return cfg
 
 
+def _print_manifest(manifest, mdir) -> None:
+    print(f"meeting_id: {manifest.meeting_id}")
+    print(f"recordings: {mdir}")
+    for role, c in manifest.channels.items():
+        tail = "  *** CLIPPING ***" if c.clipping else ""
+        print(f"  {role:5} {c.file}: {c.duration_sec}s  "
+              f"peak {c.peak_dbfs} / mean {c.mean_dbfs} dB  "
+              f"offset {c.start_offset_sec}s{tail}")
+    if manifest.partial:
+        print("WARNING: partial recording (a channel was truncated/missing)")
+    if any(c.clipping for c in manifest.channels.values()):
+        print("WARNING: clipping detected — lower mic preamp / DAC line-out to "
+              "−6…−12 dB peaks and re-capture.")
+
+
 def _capture_main(argv: list[str] | None) -> int:
     p = argparse.ArgumentParser(prog="briefly capture",
                                 description="record a meeting's two soundcard channels")
@@ -60,6 +76,17 @@ def _capture_main(argv: list[str] | None) -> int:
     rec.add_argument("--attendees", default="")
     rec.add_argument("--mode", default=None)
     rec.add_argument("--no-preflight", action="store_true")
+
+    st = csub.add_parser("start", help="begin an open-ended recording (finish with `stop`)")
+    _add_common(st)
+    st.add_argument("--attendees", default="")
+    st.add_argument("--mode", default=None)
+    st.add_argument("--no-preflight", action="store_true")
+
+    sp = csub.add_parser("stop", help="finalize the recording started with `start`")
+    _add_common(sp)
+    sp.add_argument("--meeting-id", default=None)
+
     args = p.parse_args(argv)
     cfg = _config_from(args)
     try:
@@ -72,22 +99,20 @@ def _capture_main(argv: list[str] | None) -> int:
             return 0
         if args.capcmd == "record":
             attendees = [a.strip() for a in args.attendees.split(",") if a.strip()]
-            manifest, mdir = cap.record(
-                cfg, attendees=attendees, duration=args.duration,
-                skip_preflight=args.no_preflight,
-            )
-            print(f"meeting_id: {manifest.meeting_id}")
+            manifest, mdir = cap.record(cfg, attendees=attendees, duration=args.duration,
+                                        skip_preflight=args.no_preflight)
+            _print_manifest(manifest, mdir)
+            return 0
+        if args.capcmd == "start":
+            attendees = [a.strip() for a in args.attendees.split(",") if a.strip()]
+            mid, mdir = cap.start(cfg, attendees=attendees, skip_preflight=args.no_preflight)
+            print(f"meeting_id: {mid}")
             print(f"recordings: {mdir}")
-            for role, c in manifest.channels.items():
-                tail = "  *** CLIPPING ***" if c.clipping else ""
-                print(f"  {role:5} {c.file}: {c.duration_sec}s  "
-                      f"peak {c.peak_dbfs} / mean {c.mean_dbfs} dB  "
-                      f"offset {c.start_offset_sec}s{tail}")
-            if manifest.partial:
-                print("WARNING: partial recording (a channel was truncated/missing)")
-            if any(c.clipping for c in manifest.channels.values()):
-                print("WARNING: clipping detected — lower mic preamp / DAC line-out to "
-                      "−6…−12 dB peaks and re-capture.")
+            print("recording in the background — run `briefly capture stop` to finish.")
+            return 0
+        if args.capcmd == "stop":
+            manifest, mdir = cap.stop(cfg, meeting_id=args.meeting_id)
+            _print_manifest(manifest, mdir)
             return 0
     except cap.CaptureError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -124,6 +149,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "run":
         from .orchestrator import main as run_main
         return run_main(rest)
+    if cmd == "watch":
+        from .watch import main as watch_main
+        return watch_main(rest)
     print(f"unknown command: {cmd!r}\n\n{USAGE}", file=sys.stderr)
     return 2
 

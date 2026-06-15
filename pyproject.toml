@@ -24,6 +24,7 @@ briefly-merge = "briefly.merge:main"
 briefly-summarize = "briefly.summarize:main"
 briefly-enrich = "briefly.enrich:main"
 briefly-run = "briefly.orchestrator:main"
+briefly-watch = "briefly.watch:main"
 
 [tool.setuptools.packages.find]
 include = ["briefly*"]

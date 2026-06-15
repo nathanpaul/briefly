@@ -40,9 +40,11 @@ briefly run --meeting-id <id> --config briefly.json
 ## Run a meeting
 
 ```sh
-# 1. record (dedicated capture laptop)
-briefly capture record --duration 3600 --attendees "Jane Doe,John Smith"
-#    → prints meeting_id
+# 1. record (dedicated capture laptop) — meetings of unknown length:
+briefly capture start --attendees "Jane Doe,John Smith"   # prints meeting_id; records in background
+#    ... the meeting happens ...
+briefly capture stop                                       # finalizes recordings/<id>/
+#    (or `briefly capture record --duration <sec>` for a fixed length)
 
 # 2. process up to the transcript (stops for naming)
 briefly run --meeting-id <id> --config briefly.json
@@ -58,6 +60,14 @@ briefly run --meeting-id <id> --from summarize --to enrich --force --config brie
 
 Individual stages are also commands: `briefly {capture,preprocess,transcribe,diarize,merge,
 summarize,enrich}` — run `briefly <cmd> --help`.
+
+### Auto-trigger
+Instead of running `briefly run` by hand, run the watcher — it processes each meeting the
+moment capture finalizes its `meeting.json` (single-worker, resumable, idempotent):
+```sh
+briefly watch --config briefly.json                  # to=merge (stops for speaker naming)
+briefly watch --to enrich --config briefly.json      # fully unattended (keeps Speaker_N labels)
+```
 
 ## Test
 ```sh
