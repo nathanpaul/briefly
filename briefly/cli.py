@@ -19,10 +19,14 @@ from .config import CaptureConfig
 USAGE = """briefly <command> [options]
 
 commands:
+  run         orchestrate the whole pipeline for one meeting_id
   capture     record a meeting's two soundcard channels -> recordings/<id>/
   preprocess  AEC + de-clip + resample to 16 kHz mono   -> processed/<id>/
+  transcribe  Whisper cluster (both channels)           -> *.whisper.json
+  diarize     pyannote service (line channel)           -> line.diarization.json
   merge       whisper + diarization (+ speakers)        -> transcript.json
   summarize   transcript.json (Claude)                  -> notes.md
+  enrich      enrich notes.md against the vault (Claude Code)
 
 run `briefly <command> --help` for command options.
 """
@@ -108,6 +112,18 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "summarize":
         from .summarize import main as summarize_main
         return summarize_main(rest)
+    if cmd == "transcribe":
+        from .clients.transcribe import main as transcribe_main
+        return transcribe_main(rest)
+    if cmd == "diarize":
+        from .clients.diarize import main as diarize_main
+        return diarize_main(rest)
+    if cmd == "enrich":
+        from .enrich import main as enrich_main
+        return enrich_main(rest)
+    if cmd == "run":
+        from .orchestrator import main as run_main
+        return run_main(rest)
     print(f"unknown command: {cmd!r}\n\n{USAGE}", file=sys.stderr)
     return 2
 

@@ -16,8 +16,12 @@ dev = ["pytest>=8"]
 briefly = "briefly.cli:main"
 briefly-capture = "briefly.cli:capture_main"
 briefly-preprocess = "briefly.audio.preprocess:main"
+briefly-transcribe = "briefly.clients.transcribe:main"
+briefly-diarize = "briefly.clients.diarize:main"
 briefly-merge = "briefly.merge:main"
 briefly-summarize = "briefly.summarize:main"
+briefly-enrich = "briefly.enrich:main"
+briefly-run = "briefly.orchestrator:main"
 
 [tool.setuptools.packages.find]
 include = ["briefly*"]
