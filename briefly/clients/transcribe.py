@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -28,6 +29,7 @@ class TranscribeConfig:
     language: str = "en"
     timeout_sec: float = 300
     pad_sec: float = 0.2       # context padding around each slice (audio only; not the segment time)
+    concurrency: int = 6       # parallel Wyoming requests (mic + line utterances)
 
 
 def _default_transcriber(cfg: TranscribeConfig):
@@ -49,29 +51,40 @@ def _write(path: Path, rate: int, n_samples: int, segs: list[dict]) -> None:
 
 def transcribe_meeting(processed_dir, transcripts_dir, cfg: TranscribeConfig,
                        transcribe=None) -> dict[str, Path]:
-    """LINE: transcribe per diarization turn. MIC: transcribe per VAD utterance. Writes
-    {mic,line}.whisper.json. Requires line.diarization.json (run diarize first)."""
+    """LINE: transcribe per diarization turn. MIC: transcribe per VAD utterance. All
+    utterances (both channels) are transcribed CONCURRENTLY — the per-request overhead
+    overlaps instead of summing. Writes {mic,line}.whisper.json. Requires
+    line.diarization.json (run diarize first)."""
     pdir, tdir = Path(processed_dir), Path(transcripts_dir)
     tdir.mkdir(parents=True, exist_ok=True)
     transcribe = transcribe or _default_transcriber(cfg)
 
-    # LINE — guided by the diarization turns
     diar_path = tdir / "line.diarization.json"
     if not diar_path.exists():
         raise FileNotFoundError(f"missing diarization (run diarize before transcribe): {diar_path}")
     turns = json.loads(diar_path.read_text(encoding="utf-8")).get("segments", [])
     line, lrate = vad.read_pcm16_mono(pdir / "line.16k.wav")
-    line_segs = [s for i, t in enumerate(turns)
-                 if (s := _segment(line, lrate, float(t["start"]), float(t["end"]), i,
-                                   cfg.pad_sec, transcribe))["text"]]
-    _write(tdir / "line.whisper.json", lrate, len(line), line_segs)
-
-    # MIC — "Me", VAD-segmented
     mic, mrate = vad.read_pcm16_mono(pdir / "mic.16k.wav")
-    mic_segs = [s for i, (a, b) in enumerate(vad.segment_speech(mic, mrate))
-                if (s := _segment(mic, mrate, a, b, i, cfg.pad_sec, transcribe))["text"]]
-    _write(tdir / "mic.whisper.json", mrate, len(mic), mic_segs)
 
+    # One job per utterance: (channel, samples, rate, start, end, idx).
+    jobs = [("line", line, lrate, float(t["start"]), float(t["end"]), i)
+            for i, t in enumerate(turns)]
+    jobs += [("mic", mic, mrate, a, b, i)
+             for i, (a, b) in enumerate(vad.segment_speech(mic, mrate))]
+
+    def _run(job):
+        ch, samples, rate, a, b, idx = job
+        return ch, _segment(samples, rate, a, b, idx, cfg.pad_sec, transcribe)
+
+    results = []
+    if jobs:
+        with ThreadPoolExecutor(max_workers=max(1, cfg.concurrency)) as ex:
+            results = list(ex.map(_run, jobs))   # order-preserving
+
+    line_segs = [s for ch, s in results if ch == "line" and s["text"]]
+    mic_segs = [s for ch, s in results if ch == "mic" and s["text"]]
+    _write(tdir / "line.whisper.json", lrate, len(line), line_segs)
+    _write(tdir / "mic.whisper.json", mrate, len(mic), mic_segs)
     return {"mic": tdir / "mic.whisper.json", "line": tdir / "line.whisper.json"}
 
 
