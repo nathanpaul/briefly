@@ -19,3 +19,6 @@ transcripts/
 
 # Local secrets / endpoints (.env.example is the committed template)
 .env
+
+# Machine-local plugin memory (MemSearch) — not source-controlled
+.memsearch/
