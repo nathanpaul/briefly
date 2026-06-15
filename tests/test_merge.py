@@ -230,6 +230,25 @@ class TestEcho(unittest.TestCase):
         mic_turn = [x for x in t.turns if x.channel == "mic"][0]
         self.assertNotIn("possible_echo", mic_turn.flags)
 
+    def test_window_containment_catches_shifted_short_leak(self):
+        # Short mic leak "Thanks for watching" that does NOT overlap the matching line turn
+        # (acoustic delay) — strict-overlap missed it; window + containment now drops it.
+        manifest = _manifest()
+        mic = _whisper([_seg(0, 20.5, 21.2, "Thanks for watching")])
+        line = _whisper([_seg(0, 19.0, 20.3, "okay so thanks for watching everyone")])
+        diar = _diar([("SPEAKER_00", 19.0, 20.3)])
+        t = merge(manifest, mic, line, diar, cfg=MergeConfig(echo_action="drop"), generated_at="x")
+        self.assertEqual([x for x in t.turns if x.channel == "mic"], [])
+
+    def test_distant_genuine_mic_turn_survives(self):
+        # A real mic turn with no nearby matching line text must survive the window logic.
+        manifest = _manifest()
+        mic = _whisper([_seg(0, 40.0, 43.0, "let us move on to the budget discussion now")])
+        line = _whisper([_seg(0, 19.0, 20.3, "okay so thanks for watching everyone")])
+        diar = _diar([("SPEAKER_00", 19.0, 20.3)])
+        t = merge(manifest, mic, line, diar, cfg=MergeConfig(echo_action="drop"), generated_at="x")
+        self.assertEqual(len([x for x in t.turns if x.channel == "mic"]), 1)
+
 
 # --- speakers.json apply + corrections ------------------------------------------------
 

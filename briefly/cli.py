@@ -11,7 +11,9 @@ Each stage owns its own argparse (prog="briefly <stage>"); see that stage's
 from __future__ import annotations
 
 import argparse
+import os
 import sys
+from pathlib import Path
 
 from .audio import capture as cap
 from .config import CaptureConfig
@@ -89,6 +91,10 @@ def _capture_main(argv: list[str] | None) -> int:
 
     args = p.parse_args(argv)
     cfg = _config_from(args)
+    if not args.recordings_dir:                      # align with `briefly run` via BRIEFLY_DATA_ROOT
+        from .dotenv import load_dotenv
+        load_dotenv()
+        cfg.recordings_dir = str(Path(os.environ.get("BRIEFLY_DATA_ROOT", ".")) / "recordings")
     try:
         if args.capcmd == "preflight":
             for role, info in cap.preflight(cfg).items():

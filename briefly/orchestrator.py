@@ -184,7 +184,8 @@ def load_config(path: str | None, overrides: dict) -> PipelineConfig:
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="briefly run",
                                 description="run the meeting pipeline for one meeting_id")
-    p.add_argument("--meeting-id", required=True)
+    p.add_argument("--meeting-id", help="defaults to the last captured meeting "
+                   "(recordings/.last-meeting-id)")
     p.add_argument("--from", dest="from_stage", default="preprocess", choices=STAGES)
     p.add_argument("--to", dest="to_stage", default="merge", choices=STAGES)
     p.add_argument("--force", action="store_true", help="re-run stages even if output exists")
@@ -203,12 +204,20 @@ def main(argv: list[str] | None = None) -> int:
         "diarize_url": args.diarize_url, "summarize_model": args.summarize_model,
         "claude_path": args.claude_path,
     })
+    from .state import read_last_meeting
+    mid = args.meeting_id or read_last_meeting(Path(cfg.data_root) / "recordings")
+    if not mid:
+        print("error: no --meeting-id given and no last captured meeting found "
+              "(run `briefly capture` first, or pass --meeting-id)", file=sys.stderr)
+        return 2
+    if not args.meeting_id:
+        print(f"(using last captured meeting: {mid})")
     try:
-        results = run_pipeline(cfg, args.meeting_id, args.from_stage, args.to_stage, args.force)
+        results = run_pipeline(cfg, mid, args.from_stage, args.to_stage, args.force)
     except Exception as e:  # stage failures surface here with a clear message
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     if args.to_stage == "merge" and dict(results).get("merge") == "ok":
-        print(f"\nnext: name speakers in {cfg.tx(args.meeting_id) / 'speakers.json'}, then run\n"
-              f"      briefly run --meeting-id {args.meeting_id} --from summarize --to enrich --force")
+        print(f"\nnext: name speakers in {cfg.tx(mid) / 'speakers.json'}, then run\n"
+              f"      briefly run --from summarize --to enrich --force")
     return 0

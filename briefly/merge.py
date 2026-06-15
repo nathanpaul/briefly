@@ -55,11 +55,16 @@ class MergeConfig:
     """Merge tunables (contract §Config). CLI flags / merge.yaml override."""
 
     nearest_window_sec: float = 0.5
-    echo_overlap_frac: float = 0.6
+    echo_overlap_frac: float = 0.6      # legacy; superseded by echo_window_sec (kept for compat)
     echo_text_sim: float = 0.8
     echo_action: str = "flag"          # "flag" | "drop"
     min_turn_sec: float = 0.0
     low_confidence_threshold: float = 0.5
+    # echo de-dup (text-only): match a mic turn against LINE text within a time window
+    echo_window_sec: float = 2.0        # acoustic-delay / segmentation tolerance
+    echo_contain_frac: float = 0.8      # echo if this fraction of the mic turn's words are on the line
+    echo_short_max_sec: float = 2.5     # short mic turns (typical leak: "Bye", "Thanks for watching") ...
+    echo_short_contain: float = 0.6     # ... only need this much containment
 
     @classmethod
     def from_dict(cls, d: dict) -> "MergeConfig":
@@ -67,6 +72,7 @@ class MergeConfig:
         for k in (
             "nearest_window_sec", "echo_overlap_frac", "echo_text_sim",
             "echo_action", "min_turn_sec", "low_confidence_threshold",
+            "echo_window_sec", "echo_contain_frac", "echo_short_max_sec", "echo_short_contain",
         ):
             if k in d and d[k] is not None:
                 setattr(cfg, k, d[k])
@@ -206,6 +212,15 @@ def text_similarity(a: str, b: str) -> float:
     inter = len(ta & tb)
     union = len(ta | tb)
     return inter / union if union else 0.0
+
+
+def _containment(a: str, b: str) -> float:
+    """Fraction of a's word-tokens that also appear in b (0..1). Asymmetric: a short `a`
+    fully present in a longer `b` -> ~1.0, which Jaccard would understate."""
+    ta, tb = _tokens(a), _tokens(b)
+    if not ta:
+        return 0.0
+    return len(ta & tb) / len(ta)
 
 
 # --- Internal working representation for a line unit (segment or word-run) -------------
@@ -368,11 +383,24 @@ def _number_speakers(units: list[_LineUnit]) -> dict[str, int]:
 
 # --- Echo / leakage de-dupe -----------------------------------------------------------
 
-def _apply_echo(turns: list[Turn], cfg: MergeConfig) -> tuple[list[Turn], int]:
-    """Flag (or drop) mic turns that look like residual line leakage.
+def _line_context(mic: Turn, line_turns: list[Turn], window: float) -> str:
+    """Concatenated text of LINE turns within `window` seconds of the mic turn."""
+    return " ".join(lt.text for lt in line_turns
+                    if lt.end >= mic.start - window and lt.start <= mic.end + window)
 
-    A mic turn overlapping a line turn by ≥echo_overlap_frac (of the mic turn) AND with
-    text similarity ≥echo_text_sim is treated as leakage. Returns (turns, dropped_count).
+
+def _apply_echo(turns: list[Turn], cfg: MergeConfig) -> tuple[list[Turn], int]:
+    """Flag (or drop) mic turns that look like residual LINE leakage on the "Me" channel.
+
+    A mic turn is leakage when its words appear on the LINE channel within a short time
+    window (`echo_window_sec`, tolerant of the acoustic delay + differing segment boundaries
+    that defeated strict overlap): either high token-set similarity OR high CONTAINMENT of the
+    mic turn's words in the nearby line text. Short mic turns ("Bye", "Thanks for watching" —
+    the typical leak) use a lenient containment bar; longer turns need a strong match so
+    genuine simultaneous speech is preserved. Returns (turns, dropped_count).
+
+    Text-only by design (merge sees transcripts, not audio): leakage with NO matching line
+    transcript cannot be caught here — that needs audio-energy de-dup in an earlier stage.
     """
     line_turns = [t for t in turns if t.channel == "line"]
     kept: list[Turn] = []
@@ -383,13 +411,15 @@ def _apply_echo(turns: list[Turn], cfg: MergeConfig) -> tuple[list[Turn], int]:
             continue
         dur = max(0.0, t.end - t.start)
         is_echo = False
-        if dur > 0:
-            for lt in line_turns:
-                ov = _overlap(t.start, t.end, lt.start, lt.end)
-                if ov / dur >= cfg.echo_overlap_frac and \
-                        text_similarity(t.text, lt.text) >= cfg.echo_text_sim:
-                    is_echo = True
-                    break
+        if dur > 0 and _tokens(t.text):
+            ctx = _line_context(t, line_turns, cfg.echo_window_sec)
+            if ctx:
+                sim = text_similarity(t.text, ctx)
+                cont = _containment(t.text, ctx)
+                if dur <= cfg.echo_short_max_sec:
+                    is_echo = cont >= cfg.echo_short_contain or sim >= cfg.echo_text_sim * 0.7
+                else:
+                    is_echo = sim >= cfg.echo_text_sim or cont >= cfg.echo_contain_frac
         if is_echo:
             if cfg.echo_action == "drop":
                 dropped += 1

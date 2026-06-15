@@ -20,6 +20,7 @@ from pathlib import Path
 from ..config import CaptureConfig
 from ..ids import new_ulid
 from ..models import CaptureInfo, ChannelInfo, MeetingManifest
+from ..state import write_last_meeting
 from . import devices as dev
 
 
@@ -181,6 +182,7 @@ def _finalize(cfg: CaptureConfig, mid: str, mdir: Path, started: str,
         channels={"mic": mic_ch, "line": line_ch},
     )
     manifest.write(mdir / "meeting.json")
+    write_last_meeting(mdir.parent, mid)   # recordings/.last-meeting-id — default for `briefly run`
     return manifest
 
 

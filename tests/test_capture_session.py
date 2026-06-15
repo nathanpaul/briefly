@@ -35,6 +35,7 @@ class TestFinalize(unittest.TestCase):
             m = cap._finalize(cfg, MID, mdir, "2026-06-15T00:00:00Z", ["Jane"],
                               t_mic=100.0, t_line=100.02)
             self.assertTrue((mdir / "meeting.json").exists())
+            self.assertEqual((mdir.parent / ".last-meeting-id").read_text().strip(), MID)
             self.assertFalse((mdir / "mic.wav.part").exists())   # renamed to mic.wav
             self.assertEqual(m.channels["mic"].speaker, "Me")
             self.assertEqual(m.channels["line"].start_offset_sec, 0.02)
