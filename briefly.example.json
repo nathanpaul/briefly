@@ -1,0 +1,11 @@
+{
+  "data_root": ".",
+  "vault_dir": "/path/to/your/Obsidian/Consulting",
+  "whisper_url": "http://localhost:8000/v1/audio/transcriptions",
+  "whisper_format": "openai",
+  "whisper_model": "large-v3",
+  "diarize_url": "http://localhost:8080/diarize",
+  "summarize_model": "claude-opus-4-8",
+  "claude_path": "claude",
+  "aec_enabled": true
+}
