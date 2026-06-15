@@ -28,7 +28,7 @@ class PipelineConfig:
     vault_dir: str = "vault"
     whisper_host: str = "localhost"       # wyoming-whisper TCP (port-forward or cluster DNS)
     whisper_port: int = 10300
-    diarize_url: str = "https://speaker-diarization.example.io/diarize"
+    diarize_url: str = "http://localhost:8080/diarize"   # local default; .env / flags override
     summarize_model: str = "claude-opus-4-8"
     claude_path: str = "claude"
     ffmpeg_path: str = "/opt/homebrew/bin/ffmpeg"
