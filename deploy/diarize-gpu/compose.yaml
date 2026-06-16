@@ -1,0 +1,25 @@
+services:
+  diarize:
+    build: .
+    image: briefly-diarize:gpu
+    ports:
+      - "8080:8080"            # LAN-only; do NOT forward this to the internet
+    environment:
+      DIARIZE_DEVICE: cuda
+      MODEL_ID: pyannote/speaker-diarization-community-1
+      HF_TOKEN: ${HF_TOKEN:?set HF_TOKEN in .env (see .env.example)}
+    volumes:
+      - diarize-cache:/cache   # model downloads here once, reused across restarts
+    restart: unless-stopped
+    # GPU passthrough (Docker Desktop WSL2 + NVIDIA). On Compose v2.30+ you can replace
+    # this whole `deploy:` block with the one-liner:  gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  diarize-cache:

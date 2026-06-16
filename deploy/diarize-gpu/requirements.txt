@@ -1,0 +1,18 @@
+# GPU mirror of the homelab speaker-diarization requirements. The +cu124 local
+# version forces torch/torchaudio to resolve from the CUDA index (PyPI has no
+# +cu124 wheel); everything else comes from PyPI.
+#
+# RTX 40-series (Ada) works on cu121/cu124/cu126/cu128. If pip can't find a
+# torch==2.8.0+cu124 wheel, switch the index + tag to cu126 or cu128
+# (see https://download.pytorch.org/whl/torch/).
+--extra-index-url https://download.pytorch.org/whl/cu124
+
+torch==2.8.0+cu124
+torchaudio==2.8.0+cu124
+
+pyannote.audio==4.0.4
+
+soundfile==0.13.1
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20
