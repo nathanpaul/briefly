@@ -30,6 +30,12 @@ class PipelineConfig:
     whisper_port: int = 10300
     diarize_url: str = "http://localhost:8080/diarize"   # local default; .env / flags override
     diarize_mode: str = "pyannote"        # "single" = VAD fast-path for a one-remote-speaker 1:1
+    # ASR engine for diarize+transcribe: "whisperx" (GPU box: /asr transcribe + its own /diarize),
+    # "faster-whisper" (CPU service + pyannote), or "wyoming" (legacy text-only + diarization-guided
+    # slicing). Diarize and transcribe stay separate steps for every backend.
+    asr_backend: str = "whisperx"
+    whisperx_url: str = "http://localhost:8000/asr"
+    faster_whisper_url: str = "http://localhost:8001/asr"
     summarize_model: str = "claude-opus-4-8"
     summarize_backend: str = "auto"       # auto: SDK if ANTHROPIC_API_KEY else local `claude` CLI
     claude_path: str = "claude"
@@ -68,6 +74,12 @@ def _run_preprocess(cfg: PipelineConfig, mid: str, progress=None) -> None:
 
 
 def _run_transcribe(cfg: PipelineConfig, mid: str, progress=None) -> None:
+    if cfg.asr_backend in ("whisperx", "faster-whisper"):   # POST /asr: transcribe + word align, no slicing
+        from .clients.asr import AsrConfig, transcribe_meeting_asr
+        url = cfg.whisperx_url if cfg.asr_backend == "whisperx" else cfg.faster_whisper_url
+        transcribe_meeting_asr(cfg.proc(mid), cfg.tx(mid),
+                               AsrConfig(url=url, timeout_sec=cfg.timeout_sec))
+        return
     from .clients.transcribe import TranscribeConfig, transcribe_meeting
     cb = (lambda done, total: progress.update(done / total, f"{done}/{total} utterances")) \
         if progress else None
@@ -82,6 +94,8 @@ def _run_diarize(cfg: PipelineConfig, mid: str, progress=None) -> None:
         from .clients.diarize import diarize_single
         diarize_single(cfg.proc(mid), cfg.tx(mid))
         return
+    # pyannote-protocol POST /diarize — served by the pyannote service OR WhisperX's own /diarize
+    # endpoint (set diarize_url accordingly). A separate step from transcribe, either way.
     from .clients.diarize import DiarizeConfig, diarize_meeting
     attendees = _manifest(cfg, mid).get("attendees") or []
     diarize_meeting(cfg.proc(mid), cfg.tx(mid),
@@ -178,6 +192,8 @@ _ENV = {
     "data_root": "BRIEFLY_DATA_ROOT", "vault_dir": "BRIEFLY_VAULT_DIR",
     "whisper_host": "BRIEFLY_WHISPER_HOST", "whisper_port": "BRIEFLY_WHISPER_PORT",
     "diarize_url": "BRIEFLY_DIARIZE_URL", "diarize_mode": "BRIEFLY_DIARIZE_MODE",
+    "asr_backend": "BRIEFLY_ASR_BACKEND", "whisperx_url": "BRIEFLY_WHISPERX_URL",
+    "faster_whisper_url": "BRIEFLY_FASTER_WHISPER_URL",
     "summarize_model": "BRIEFLY_SUMMARIZE_MODEL", "claude_path": "BRIEFLY_CLAUDE_PATH",
     "summarize_backend": "BRIEFLY_SUMMARIZE_BACKEND",
 }
@@ -215,6 +231,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--diarize-url")
     p.add_argument("--diarize-mode", choices=["pyannote", "single"],
                    help="'single' = VAD fast-path for a one-remote-speaker 1:1 (skips pyannote)")
+    p.add_argument("--asr-backend", choices=["whisperx", "faster-whisper", "wyoming"],
+                   help="diarize+transcribe engine (default whisperx)")
+    p.add_argument("--whisperx-url")
+    p.add_argument("--faster-whisper-url")
     p.add_argument("--summarize-model")
     p.add_argument("--summarize-backend", choices=["auto", "api", "cli"],
                    help="auto (default): Anthropic SDK if ANTHROPIC_API_KEY set, else the `claude` CLI")
@@ -224,6 +244,8 @@ def main(argv: list[str] | None = None) -> int:
         "data_root": args.data_root, "vault_dir": args.vault_dir,
         "whisper_host": args.whisper_host, "whisper_port": args.whisper_port,
         "diarize_url": args.diarize_url, "diarize_mode": args.diarize_mode,
+        "asr_backend": args.asr_backend, "whisperx_url": args.whisperx_url,
+        "faster_whisper_url": args.faster_whisper_url,
         "summarize_model": args.summarize_model, "claude_path": args.claude_path,
         "summarize_backend": args.summarize_backend,
     })

@@ -1,0 +1,13 @@
+# Python deps for the WhisperX GPU service. torch / torchaudio / torchvision are NOT pinned here
+# — they're installed in the Dockerfile from the CUDA wheel index (+cu128, which bundles its own
+# CUDA runtime). Installing torch here from PyPI would pull a non-cu128 wheel.
+#
+# whisperx 3.8.6 transitively pins a coherent CUDA stack and is the only heavy line we pin:
+#   faster-whisper>=1.2 + ctranslate2>=4.5 (cuDNN 9, matches torch 2.8) +
+#   pyannote.audio>=4.0 (loads speaker-diarization-community-1 / 3.1) + torchcodec +
+#   transformers + matplotlib. So both /asr (transcribe+align) and /diarize run on CUDA.
+whisperx==3.8.6
+
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+python-multipart==0.0.20

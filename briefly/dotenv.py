@@ -28,6 +28,14 @@ def load_dotenv(path: str | os.PathLike = ".env", override: bool = False) -> dic
         if key.startswith("export "):
             key = key[len("export "):].strip()
         val = val.strip()
+        # Strip an inline comment: a '#' preceded by whitespace starts a comment (e.g.
+        # `URL=http://h:8000/asr   # the GPU box`). Skipped for quoted values so a '#' inside a
+        # quoted secret/URL survives; `pass#word` / `http://x#frag` (no leading space) are kept.
+        if val[:1] not in ("'", '"'):
+            for i in range(1, len(val)):
+                if val[i] == "#" and val[i - 1] in " \t":
+                    val = val[:i].rstrip()
+                    break
         if len(val) >= 2 and val[0] == val[-1] and val[0] in ("'", '"'):
             val = val[1:-1]
         if key and (override or key not in os.environ):

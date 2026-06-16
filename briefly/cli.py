@@ -29,7 +29,8 @@ commands:
   diarize     pyannote service (line channel)           -> line.diarization.json
   transcribe  wyoming-whisper (diarization-guided)      -> *.whisper.json
   merge       whisper + diarization (+ speakers)        -> transcript.json
-  summarize   transcript.json (Claude)                  -> notes.md
+  summarize   "<prompt>" enrich a meeting into the vault your way (agentic Claude Code,
+              meeting-id optional); no prompt -> structured per-person summary -> notes.md
   enrich      enrich notes.md against the vault (Claude Code)
 
 run `briefly <command> --help` for command options.
@@ -142,6 +143,12 @@ def main(argv: list[str] | None = None) -> int:
         from .audio.preprocess import main as preprocess_main
         return preprocess_main(rest)
     if cmd == "summarize":
+        # `briefly summarize "<prompt>"` (a leading non-flag arg) → prompt-driven vault
+        # enrichment via agentic Claude Code (meeting-id optional, defaults to last). With no
+        # prompt → the structured per-person summary stage (what `briefly run` uses).
+        if rest and not rest[0].startswith("-"):
+            from .summarize_agent import main as summarize_agent_main
+            return summarize_agent_main(rest)
         from .summarize import main as summarize_main
         return summarize_main(rest)
     if cmd == "transcribe":
@@ -150,6 +157,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "diarize":
         from .clients.diarize import main as diarize_main
         return diarize_main(rest)
+    if cmd == "asr":
+        from .clients.asr import main as asr_main
+        return asr_main(rest)
     if cmd == "enrich":
         from .enrich import main as enrich_main
         return enrich_main(rest)

@@ -1,0 +1,35 @@
+services:
+  whisperx:
+    build: .
+    image: briefly-whisperx:gpu
+    ports:
+      - "8000:8000"            # LAN-only; do NOT forward this to the internet
+    environment:
+      WHISPERX_DEVICE: cuda
+      WHISPERX_MODEL: large-v2
+      WHISPERX_COMPUTE_TYPE: float16
+      # Point ctranslate2 (faster-whisper's CUDA backend) at torch's bundled cuDNN 9 + cuBLAS,
+      # else /asr crashes at transcription with "Could not load libcudnn_ops*.so". Set here
+      # (runtime) as well as in the Dockerfile so it's guaranteed to reach the container.
+      LD_LIBRARY_PATH: /usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib:/usr/local/lib/python3.11/site-packages/nvidia/cublas/lib:/usr/local/lib/python3.11/site-packages/nvidia/cuda_runtime/lib
+      # The gated pyannote pipeline /diarize loads. Default 3.1; override in .env to match the
+      # model your HF token has accepted (e.g. the homelab's pyannote/speaker-diarization-community-1).
+      WHISPERX_DIARIZE_MODEL: ${WHISPERX_DIARIZE_MODEL:-pyannote/speaker-diarization-3.1}
+      # HF_TOKEN is required only for the /diarize endpoint (the gated pyannote model).
+      # /asr (transcribe + align) works without it. Accept the model terms — see .env.example.
+      HF_TOKEN: ${HF_TOKEN:?set HF_TOKEN in .env (see .env.example)}
+    volumes:
+      - diarize-cache:/cache   # Whisper + align + diarization models download here once
+    restart: unless-stopped
+    # GPU passthrough (Docker Desktop WSL2 + NVIDIA). On Compose v2.30+ you can replace
+    # this whole `deploy:` block with the one-liner:  gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+volumes:
+  diarize-cache:

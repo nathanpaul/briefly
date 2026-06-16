@@ -25,16 +25,18 @@ machines until Claude writes the summary.
 ```mermaid
 flowchart LR
     C["capture<br/>mic + line"] --> P["preprocess<br/>AEC · 16 kHz"]
-    P --> D["diarize<br/>pyannote"]
-    D --> T["transcribe<br/>wyoming-whisper"]
+    P --> D["diarize<br/>pyannote (GPU)"]
+    D --> T["transcribe<br/>whisperx /asr"]
     T --> M["merge<br/>transcript.json"]
     M --> NAME{{name speakers}}
     NAME --> S["summarize<br/>Claude · notes.md"]
     S --> E["enrich<br/>Obsidian vault"]
 ```
 
-**Diarize runs before transcribe** — wyoming-whisper is text-only, so the line channel is sliced
-by the diarization turns and each slice is transcribed (the mic channel is VAD-segmented). Stage
+**Diarize + transcribe run on a selectable [ASR backend](docs/asr-backends.md)** (`BRIEFLY_ASR_BACKEND`,
+default **`whisperx`**) — always as **two separate steps**: WhisperX on the GPU box transcribes via
+`/asr` and diarizes via its own `/diarize`; `faster-whisper` (cluster CPU) + pyannote; or legacy
+`wyoming` (text-only, sliced by the diarization turns). Stage
 outputs live in per-meeting dirs (`recordings/ → processed/ → transcripts/ → vault/`), keyed by a
 ULID `meeting_id`; `briefly run` skips any stage whose output already exists.
 
@@ -43,21 +45,33 @@ ULID `meeting_id`; `briefly run` skips any stage whose output already exists.
 ```sh
 # on the capture laptop (macOS + ffmpeg)
 pip install -e '.[aec,whisper,summarize]'
-cp .env.example .env                       # point at your whisper + diarize services
+cp .env.example .env                        # point at your whisper + diarize services
 
+# 1. CAPTURE — record the two soundcard channels (meeting length is open-ended)
 briefly capture start --attendees "Jane Doe,John Smith"   # prints a meeting_id; records detached
 #   … the meeting happens …
 briefly capture stop                                       # finalizes recordings/<id>/
 
-briefly run                  # preprocess → diarize → transcribe → merge (defaults to last capture)
-#   name the speakers in transcripts/<id>/speakers.json:
+# 2. TRANSCRIBE — preprocess → diarize → transcribe → merge (defaults to the last capture)
+briefly run                                                # → transcripts/<id>/transcript.{json,txt}
+
+# 3. NAME the speakers in transcripts/<id>/speakers.json (merge picks the names up):
 #   {"map": {"Me": "You", "Speaker_1": "Jane Doe", "Speaker_2": "John Smith"}}
-briefly run --from summarize --to enrich --force           # → per-person brief in the vault
+
+# 4. SUMMARIZE + ENRICH into your Obsidian vault — choose one:
+briefly run --from summarize --to enrich --force           # a) standard per-person brief, then enrich
+briefly summarize "3-bullet exec summary + action items with owners; link each person to their MOC"
+#                                                            b) custom: enrich THIS meeting your way
 ```
 
-`briefly run` auto-loads `.env` and defaults to the last captured meeting, so no `--meeting-id` is
-needed. Every stage is also its own command (`briefly {capture,preprocess,diarize,transcribe,merge,summarize,enrich}` — add `--help`). Full walkthrough with audio-chain + gain guidance:
-**[docs/running-a-meeting.md](docs/running-a-meeting.md)**.
+Every step defaults to the **last captured meeting** (via `recordings/.last-meeting-id`), so you rarely
+pass `--meeting-id`; `briefly run` also auto-loads `.env` and skips any stage whose output already
+exists. Step 4 gives you two ways to land notes in the vault: **(a)** the fixed pipeline — a structured
+per-person brief (`summarize`) followed by vault-aware enrichment (`enrich`); or **(b)** `briefly
+summarize "<prompt>"`, a one-shot agentic pass where your prompt decides how *this* meeting is written
+into the vault. Every stage is also its own command (`briefly
+{capture,preprocess,diarize,transcribe,merge,summarize,enrich}` — add `--help`). Full walkthrough with
+audio-chain + gain guidance: **[docs/running-a-meeting.md](docs/running-a-meeting.md)**.
 
 <details>
 <summary><b>Or run it fully automatically (watch mode)</b></summary>
@@ -95,9 +109,10 @@ A JSON config ([briefly.example.json](briefly.example.json), `--config`) works t
 
 ## Services
 
-- **Diarization** — a pyannote FastAPI service, `POST /diarize` (multipart field `audio`) → `BRIEFLY_DIARIZE_URL`.
-- **Whisper** — `wyoming-whisper`, **Wyoming protocol over TCP `:10300`, text-only** (not HTTP) → `BRIEFLY_WHISPER_HOST` / `…_PORT`.
-- **No homelab?** Run both in Docker on the laptop — [docs/local-docker-fallback.md](docs/local-docker-fallback.md) *(planned)*.
+Pick an [ASR backend](docs/asr-backends.md) with `BRIEFLY_ASR_BACKEND` (default `whisperx`):
+- **`whisperx`** — one **GPU** box, two endpoints: transcribe + align via `/asr` → `BRIEFLY_WHISPERX_URL`, and diarize via its own `/diarize` → `BRIEFLY_DIARIZE_URL` (a drop-in for the pyannote service). Separate steps. Stand it up with [deploy/whisperx-gpu/](deploy/whisperx-gpu/).
+- **`faster-whisper`** — CPU faster-whisper (word timestamps) on the cluster → `BRIEFLY_FASTER_WHISPER_URL`, plus the pyannote diarization service → `BRIEFLY_DIARIZE_URL`.
+- **`wyoming`** — legacy `wyoming-whisper` (Wyoming/TCP, text-only) → `BRIEFLY_WHISPER_HOST`/`…_PORT`, plus pyannote.
 
 Homelab specifics: [knowledge/cluster/homelab-services.md](knowledge/cluster/homelab-services.md).
 
