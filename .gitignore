@@ -12,6 +12,9 @@ venv/
 recordings/
 processed/
 transcripts/
+knowledge/
+docs/
+scripts/
 
 # Local scratch
 *.part
