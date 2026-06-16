@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from . import http
+from . import vad
 
 
 @dataclass
@@ -48,6 +49,32 @@ def diarize_meeting(processed_dir: str | Path, transcripts_dir: str | Path,
     if not src.exists():
         raise FileNotFoundError(f"missing cleaned line audio: {src}")
     resp = diarize_file(src, cfg, post=post)
+    dst = Path(transcripts_dir) / "line.diarization.json"
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    dst.write_text(json.dumps(resp, indent=2), encoding="utf-8")
+    return dst
+
+
+def diarize_single(processed_dir: str | Path, transcripts_dir: str | Path,
+                   speaker: str = "SPEAKER_00") -> Path:
+    """Single-remote-speaker fast-path (e.g. a 1:1): skip pyannote entirely. VAD-segment the
+    cleaned LINE channel and label every speech span as one speaker. The output is
+    schema-compatible with the pyannote service response, so `transcribe` (slices the line by
+    these spans) and `merge` are unchanged. Milliseconds, no network. Only correct when the
+    line channel really is one speaker — opt in per meeting (see docs/diarize-parallel.md)."""
+    src = Path(processed_dir) / "line.16k.wav"
+    if not src.exists():
+        raise FileNotFoundError(f"missing cleaned line audio: {src}")
+    samples, rate = vad.read_pcm16_mono(src)
+    spans = vad.segment_speech(samples, rate)
+    resp = {
+        "model": "vad-single-speaker",
+        "duration_sec": round(len(samples) / rate, 3) if rate else 0.0,
+        "num_speakers": 1 if spans else 0,
+        "processing_sec": 0.0,
+        "rt_factor": 0.0,
+        "segments": [{"speaker": speaker, "start": s, "end": e} for s, e in spans],
+    }
     dst = Path(transcripts_dir) / "line.diarization.json"
     dst.parent.mkdir(parents=True, exist_ok=True)
     dst.write_text(json.dumps(resp, indent=2), encoding="utf-8")

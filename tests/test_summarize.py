@@ -405,5 +405,65 @@ class TestEndToEnd(unittest.TestCase):
         self.assertEqual(schema["required"], ["per_speaker", "open_questions"])
 
 
+class TestSummarizeBackends(unittest.TestCase):
+    """The claude-CLI backend lets `briefly run` summarize with no ANTHROPIC_API_KEY."""
+
+    BRIEF = {"per_speaker": [{"speaker": "Me", "summary": ["hi"], "questions": []}],
+             "open_questions": [{"question": "when?"}]}
+
+    @staticmethod
+    def _fake_run(stdout, returncode=0, stderr=""):
+        from types import SimpleNamespace
+        calls = []
+
+        def run(cmd, prompt, timeout):
+            calls.append({"cmd": cmd, "prompt": prompt})
+            return SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+        run.calls = calls
+        return run
+
+    def _call(self, client, **kw):
+        base = dict(system="sys", transcript_text="t", schema={"x": 1},
+                    model="m", max_tokens=1, max_retries=1)
+        base.update(kw)
+        return client(**base)
+
+    def test_cli_parses_result_envelope(self):
+        run = self._fake_run(json.dumps({"result": json.dumps(self.BRIEF)}))
+        brief = self._call(S.make_claude_cli_client("claude", run=run))
+        self.assertEqual(brief["per_speaker"][0]["speaker"], "Me")
+        self.assertIn("-p", run.calls[0]["cmd"])
+        self.assertIn("--output-format", run.calls[0]["cmd"])
+
+    def test_cli_strips_prose_and_fences(self):
+        wrapped = "Sure!\n```json\n" + json.dumps(self.BRIEF) + "\n```\n"
+        run = self._fake_run(json.dumps({"result": wrapped}))
+        brief = self._call(S.make_claude_cli_client("claude", run=run), max_retries=0)
+        self.assertEqual(brief["open_questions"][0]["question"], "when?")
+
+    def test_cli_retries_then_raises(self):
+        run = self._fake_run("not json at all")
+        with self.assertRaises(S.ClaudeError):
+            self._call(S.make_claude_cli_client("claude", run=run), max_retries=1)
+        self.assertEqual(len(run.calls), 2)   # max_retries + 1 attempts
+
+    def test_backend_selection(self):
+        import os
+        self.assertTrue(callable(S.make_brief_client(S.SummarizeConfig(summarize_backend="cli"))))
+        old = os.environ.pop("ANTHROPIC_API_KEY", None)
+        try:
+            # auto + no key + bogus claude path -> clear error
+            with self.assertRaises(S.ClaudeError):
+                S.make_brief_client(S.SummarizeConfig(claude_path="no-such-binary-xyz123"))
+            # auto + key present -> a client (the SDK path; no network until called)
+            os.environ["ANTHROPIC_API_KEY"] = "sk-test"
+            self.assertTrue(callable(S.make_brief_client(S.SummarizeConfig())))
+        finally:
+            os.environ.pop("ANTHROPIC_API_KEY", None)
+            if old is not None:
+                os.environ["ANTHROPIC_API_KEY"] = old
+
+
 if __name__ == "__main__":
     unittest.main()

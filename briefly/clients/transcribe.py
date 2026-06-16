@@ -14,7 +14,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -50,11 +50,12 @@ def _write(path: Path, rate: int, n_samples: int, segs: list[dict]) -> None:
 
 
 def transcribe_meeting(processed_dir, transcripts_dir, cfg: TranscribeConfig,
-                       transcribe=None) -> dict[str, Path]:
+                       transcribe=None, on_progress=None) -> dict[str, Path]:
     """LINE: transcribe per diarization turn. MIC: transcribe per VAD utterance. All
     utterances (both channels) are transcribed CONCURRENTLY — the per-request overhead
     overlaps instead of summing. Writes {mic,line}.whisper.json. Requires
-    line.diarization.json (run diarize first)."""
+    line.diarization.json (run diarize first). `on_progress(done, total)` is called as each
+    utterance completes (for progress reporting)."""
     pdir, tdir = Path(processed_dir), Path(transcripts_dir)
     tdir.mkdir(parents=True, exist_ok=True)
     transcribe = transcribe or _default_transcriber(cfg)
@@ -76,10 +77,16 @@ def transcribe_meeting(processed_dir, transcripts_dir, cfg: TranscribeConfig,
         ch, samples, rate, a, b, idx = job
         return ch, _segment(samples, rate, a, b, idx, cfg.pad_sec, transcribe)
 
-    results = []
+    results: list = [None] * len(jobs)
     if jobs:
         with ThreadPoolExecutor(max_workers=max(1, cfg.concurrency)) as ex:
-            results = list(ex.map(_run, jobs))   # order-preserving
+            futs = {ex.submit(_run, job): i for i, job in enumerate(jobs)}
+            done = 0
+            for fut in as_completed(futs):
+                results[futs[fut]] = fut.result()   # fill by index -> order-preserving
+                done += 1
+                if on_progress:
+                    on_progress(done, len(jobs))
 
     line_segs = [s for ch, s in results if ch == "line" and s["text"]]
     mic_segs = [s for ch, s in results if ch == "mic" and s["text"]]

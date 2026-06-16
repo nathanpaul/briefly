@@ -81,6 +81,11 @@ class SummarizeConfig:
     # unless provided here. Stored as wikilink strings (e.g. "[[Apollo MOC]]") or "".
     project: str = ""
     proposal: str = ""
+    # Claude backend. "auto": use the Anthropic SDK when ANTHROPIC_API_KEY is set, else the
+    # local `claude` CLI (Claude Code auth) — so `briefly run` needs no API key when claude is
+    # installed. Force with "api" / "cli".
+    claude_path: str = "claude"
+    summarize_backend: str = "auto"
 
 
 # ------------------------------------------------------------------------- exceptions
@@ -181,6 +186,85 @@ def make_anthropic_client() -> BriefClient:
         return _validate_brief_shape(brief)
 
     return _call
+
+
+def _extract_json(text: str) -> dict:
+    """Parse a JSON object from model text that may be wrapped in prose or ``` fences."""
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    i, j = text.find("{"), text.rfind("}")
+    if i != -1 and j > i:
+        return json.loads(text[i:j + 1])   # outermost {...}
+    raise ClaudeError("no JSON object found in claude CLI output")
+
+
+def make_claude_cli_client(claude_path: str = "claude", run=None) -> BriefClient:
+    """Claude client backed by the local `claude` CLI (Claude Code auth) instead of the Anthropic
+    SDK — so `briefly run` needs no ANTHROPIC_API_KEY when claude is installed (same auth `enrich`
+    uses). The CLI has no structured-output guarantee, so we ask for JSON-only, extract it, and
+    validate; `max_retries` covers a stray bad parse. `run` is injectable for tests."""
+    import subprocess
+
+    def _default_run(cmd, prompt, timeout):
+        return subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout)
+
+    runner = run or _default_run
+
+    def _call(*, system: str, transcript_text: str, schema: dict,
+              model: str, max_tokens: int, max_retries: int) -> dict:
+        prompt = (
+            f"{system}\n\nRespond with ONLY a single JSON object matching this schema — no prose, "
+            f"no markdown, no code fences:\n{json.dumps(schema)}\n\nTranscript:\n{transcript_text}"
+        )
+        cmd = [claude_path, "-p", "--output-format", "json", "--allowedTools", ""]
+        if model:
+            cmd += ["--model", model]
+        last = "claude CLI produced no valid brief"
+        for _ in range(max(1, max_retries + 1)):
+            try:
+                proc = runner(cmd, prompt, 900)
+            except FileNotFoundError as e:
+                raise ClaudeError(f"claude CLI not found ({claude_path!r}): {e}") from e
+            if proc.returncode != 0:
+                last = f"claude -p failed (exit {proc.returncode}): {(proc.stderr or '')[:300]}"
+                continue
+            # `--output-format json` wraps the reply: {... "result": "<text>"}. Fall back to raw.
+            text = proc.stdout
+            try:
+                env = json.loads(proc.stdout)
+                if isinstance(env, dict) and "result" in env:
+                    text = env["result"]
+            except json.JSONDecodeError:
+                pass
+            try:
+                return _validate_brief_shape(_extract_json(text))
+            except (ClaudeError, json.JSONDecodeError) as e:
+                last = f"claude CLI output was not a valid brief: {e}"
+        raise ClaudeError(last)
+
+    return _call
+
+
+def make_brief_client(cfg: SummarizeConfig) -> BriefClient:
+    """Pick the Claude backend: the Anthropic SDK if ANTHROPIC_API_KEY is set, else the local
+    `claude` CLI if installed — so summarize needs no API key when claude is available. Force via
+    cfg.summarize_backend ('api' | 'cli' | 'auto')."""
+    import shutil
+
+    backend = getattr(cfg, "summarize_backend", "auto")
+    if backend == "api":
+        return make_anthropic_client()
+    if backend == "cli":
+        return make_claude_cli_client(cfg.claude_path)
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return make_anthropic_client()
+    if shutil.which(cfg.claude_path):
+        return make_claude_cli_client(cfg.claude_path)
+    raise ClaudeError(
+        "no ANTHROPIC_API_KEY set and the `claude` CLI was not found — set the key, install "
+        "Claude Code, or pass --summarize-backend")
 
 
 # --------------------------------------------------------------------------- loading
@@ -526,7 +610,7 @@ def summarize(cfg: SummarizeConfig, meeting_id: str,
         brief = _empty_brief("no usable speech captured")
     else:
         if client is None:
-            client = make_anthropic_client()
+            client = make_brief_client(cfg)
         system, transcript_text = build_brief_prompt(transcript, speakers_map)
         schema = _load_schema()
 

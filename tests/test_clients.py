@@ -1,9 +1,13 @@
 import json
+import math
+import struct
 import tempfile
 import unittest
+import wave
 from pathlib import Path
 
-from briefly.clients.diarize import DiarizeConfig, diarize_file, diarize_meeting
+from briefly.clients.diarize import (
+    DiarizeConfig, diarize_file, diarize_meeting, diarize_single)
 from briefly.merge import DiarDoc
 
 
@@ -54,6 +58,40 @@ class TestDiarize(unittest.TestCase):
             out = diarize_meeting(proc, tx, DiarizeConfig(url="http://d"), post=post)
             self.assertTrue(out.exists())
             DiarDoc.from_dict(json.loads(out.read_text()))
+
+
+def _write_speechy_wav(path: Path, rate: int = 16000) -> None:
+    """0.6s tone, 0.6s silence, 0.6s tone -> VAD should find 2 spans (one speaker)."""
+    n = int(0.6 * rate)
+    tone = [int(8000 * math.sin(2 * math.pi * 440 * i / rate)) for i in range(n)]
+    samples = tone + [0] * n + tone
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(rate)
+        w.writeframes(struct.pack("<%dh" % len(samples), *samples))
+
+
+class TestDiarizeSingle(unittest.TestCase):
+    def test_single_speaker_fastpath(self):
+        with tempfile.TemporaryDirectory() as td:
+            proc = Path(td) / "processed"
+            proc.mkdir()
+            _write_speechy_wav(proc / "line.16k.wav")
+            tx = Path(td) / "transcripts"
+            out = diarize_single(proc, tx)
+            self.assertTrue(out.exists())
+            resp = json.loads(out.read_text())
+            DiarDoc.from_dict(resp)  # merge-compatible schema
+            self.assertEqual(resp["model"], "vad-single-speaker")
+            self.assertEqual(resp["num_speakers"], 1)
+            self.assertGreaterEqual(len(resp["segments"]), 1)
+            self.assertTrue(all(s["speaker"] == "SPEAKER_00" for s in resp["segments"]))
+
+    def test_missing_line_raises(self):
+        with tempfile.TemporaryDirectory() as td:
+            with self.assertRaises(FileNotFoundError):
+                diarize_single(Path(td) / "processed", Path(td) / "transcripts")
 
 
 if __name__ == "__main__":

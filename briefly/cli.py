@@ -23,6 +23,7 @@ USAGE = """briefly <command> [options]
 commands:
   run         orchestrate the whole pipeline for one meeting_id
   watch       auto-run the pipeline when a new meeting is captured
+  status      show pipeline progress for a meeting (--watch to follow a running job)
   capture     record (record --duration | start/stop) two soundcard channels
   preprocess  AEC + de-clip + resample to 16 kHz mono   -> processed/<id>/
   diarize     pyannote service (line channel)           -> line.diarization.json
@@ -158,6 +159,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "watch":
         from .watch import main as watch_main
         return watch_main(rest)
+    if cmd == "status":
+        from .orchestrator import status_main
+        return status_main(rest)
     print(f"unknown command: {cmd!r}\n\n{USAGE}", file=sys.stderr)
     return 2
 

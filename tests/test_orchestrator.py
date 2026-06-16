@@ -38,31 +38,31 @@ def _setup_meeting(root: Path) -> None:
 
 
 def _fakes(calls: list):
-    def fake_preprocess(cfg, mid):
+    def fake_preprocess(cfg, mid, progress=None):
         calls.append("preprocess")
         cfg.proc(mid).mkdir(parents=True, exist_ok=True)
         (cfg.proc(mid) / "mic.16k.wav").write_bytes(b"x")
         (cfg.proc(mid) / "line.16k.wav").write_bytes(b"x")
 
-    def fake_transcribe(cfg, mid):
+    def fake_transcribe(cfg, mid, progress=None):
         calls.append("transcribe")
         cfg.tx(mid).mkdir(parents=True, exist_ok=True)
         (cfg.tx(mid) / "mic.whisper.json").write_text(json.dumps(MIC_WHISPER))
         (cfg.tx(mid) / "line.whisper.json").write_text(json.dumps(LINE_WHISPER))
 
-    def fake_diarize(cfg, mid):
+    def fake_diarize(cfg, mid, progress=None):
         calls.append("diarize")
         cfg.tx(mid).mkdir(parents=True, exist_ok=True)   # diarize now runs before transcribe
         (cfg.tx(mid) / "line.diarization.json").write_text(json.dumps(LINE_DIAR))
 
-    def fake_summarize(cfg, mid):
+    def fake_summarize(cfg, mid, progress=None):
         calls.append("summarize")
         p = notes_path(cfg, mid)
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text("---\ntype: meeting\n---\n# Note\n"
                      "<!-- briefly:enrichment:start -->\n<!-- briefly:enrichment:end -->\n")
 
-    def fake_enrich(cfg, mid):
+    def fake_enrich(cfg, mid, progress=None):
         calls.append("enrich")
 
     return {"preprocess": fake_preprocess, "transcribe": fake_transcribe,

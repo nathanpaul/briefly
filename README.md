@@ -77,7 +77,7 @@ meeting's `meeting.json`.
 | **Capture** | macOS with the Cubilux CB5 soundcard; `ffmpeg` 8.x at `/opt/homebrew/bin/ffmpeg`. |
 | **Runtime** | Python 3.11+. Core is **stdlib-only**; `pip install -e '.[aec,whisper,summarize]'` adds `numpy` (real AEC), `wyoming` (STT client), and `anthropic` (Claude). Without the extras, AEC passes through and transcribe/summarize are unavailable. (Or `pip install -r requirements.txt`.) |
 | **Services** | A **wyoming-whisper** endpoint (Wyoming/TCP) and a **pyannote diarization** HTTP service — your [homelab](knowledge/cluster/homelab-services.md), or both in [local Docker](docs/local-docker-fallback.md) *(planned)*. |
-| **Claude** | The `claude` CLI for `enrich` (uses your Claude Code auth) + `ANTHROPIC_API_KEY` for `summarize`. |
+| **Claude** | The `claude` CLI (your Claude Code auth) — `enrich` and `summarize` both use it by default, **no API key needed**. Set `ANTHROPIC_API_KEY` only to run `summarize` via the Anthropic SDK instead. |
 | **Vault** | Copy [vault-template/](vault-template/) and set the `40-Personal` OS guard (see its README). |
 
 ## Configuration

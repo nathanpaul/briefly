@@ -29,7 +29,9 @@ class PipelineConfig:
     whisper_host: str = "localhost"       # wyoming-whisper TCP (port-forward or cluster DNS)
     whisper_port: int = 10300
     diarize_url: str = "http://localhost:8080/diarize"   # local default; .env / flags override
+    diarize_mode: str = "pyannote"        # "single" = VAD fast-path for a one-remote-speaker 1:1
     summarize_model: str = "claude-opus-4-8"
+    summarize_backend: str = "auto"       # auto: SDK if ANTHROPIC_API_KEY else local `claude` CLI
     claude_path: str = "claude"
     ffmpeg_path: str = "/opt/homebrew/bin/ffmpeg"
     aec_enabled: bool = True
@@ -59,20 +61,27 @@ def notes_path(cfg: PipelineConfig, mid: str) -> Path:
 
 # --- stage runners (call the stage modules) -------------------------------------------
 
-def _run_preprocess(cfg: PipelineConfig, mid: str) -> None:
+def _run_preprocess(cfg: PipelineConfig, mid: str, progress=None) -> None:
     from .audio.preprocess import PreprocessConfig, preprocess
     preprocess(mid, cfg.rec(mid), cfg.proc(mid),
                PreprocessConfig(aec_enabled=cfg.aec_enabled, ffmpeg_path=cfg.ffmpeg_path))
 
 
-def _run_transcribe(cfg: PipelineConfig, mid: str) -> None:
+def _run_transcribe(cfg: PipelineConfig, mid: str, progress=None) -> None:
     from .clients.transcribe import TranscribeConfig, transcribe_meeting
+    cb = (lambda done, total: progress.update(done / total, f"{done}/{total} utterances")) \
+        if progress else None
     transcribe_meeting(cfg.proc(mid), cfg.tx(mid),
                        TranscribeConfig(host=cfg.whisper_host, port=int(cfg.whisper_port),
-                                        timeout_sec=cfg.timeout_sec))
+                                        timeout_sec=cfg.timeout_sec),
+                       on_progress=cb)
 
 
-def _run_diarize(cfg: PipelineConfig, mid: str) -> None:
+def _run_diarize(cfg: PipelineConfig, mid: str, progress=None) -> None:
+    if cfg.diarize_mode == "single":   # 1:1 fast-path: VAD-segment line, one speaker, no pyannote
+        from .clients.diarize import diarize_single
+        diarize_single(cfg.proc(mid), cfg.tx(mid))
+        return
     from .clients.diarize import DiarizeConfig, diarize_meeting
     attendees = _manifest(cfg, mid).get("attendees") or []
     diarize_meeting(cfg.proc(mid), cfg.tx(mid),
@@ -80,21 +89,22 @@ def _run_diarize(cfg: PipelineConfig, mid: str) -> None:
                                   max_speakers=len(attendees) or None))
 
 
-def _run_merge(cfg: PipelineConfig, mid: str) -> None:
+def _run_merge(cfg: PipelineConfig, mid: str, progress=None) -> None:
     from .merge import run as merge_run
     merge_run(mid, cfg.tx(mid), cfg.rec(mid))
 
 
-def _run_summarize(cfg: PipelineConfig, mid: str) -> None:
+def _run_summarize(cfg: PipelineConfig, mid: str, progress=None) -> None:
     from .summarize import SummarizeConfig, summarize
     summarize(SummarizeConfig(
-        model=cfg.summarize_model, vault_dir=cfg.vault_dir,
+        model=cfg.summarize_model, vault_dir=cfg.vault_dir, claude_path=cfg.claude_path,
+        summarize_backend=cfg.summarize_backend,
         transcripts_dir=str(Path(cfg.data_root) / "transcripts"),
         recordings_dir=str(Path(cfg.data_root) / "recordings"),
     ), mid)
 
 
-def _run_enrich(cfg: PipelineConfig, mid: str) -> None:
+def _run_enrich(cfg: PipelineConfig, mid: str, progress=None) -> None:
     from .enrich import EnrichConfig, enrich_meeting
     enrich_meeting(notes_path(cfg, mid),
                    EnrichConfig(vault_dir=cfg.vault_dir, claude_path=cfg.claude_path))
@@ -136,8 +146,9 @@ DONE = {
 
 def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "preprocess",
                  to_stage: str = "merge", force: bool = False, runners=None,
-                 log=print) -> list[tuple[str, str]]:
-    """Run stages [from_stage..to_stage] for one meeting. Returns [(stage, "ok"|"skip")]."""
+                 log=print, progress=None) -> list[tuple[str, str]]:
+    """Run stages [from_stage..to_stage] for one meeting. Returns [(stage, "ok"|"skip")].
+    `progress` (a ProgressReporter) is optional; when given, a heartbeat is kept current."""
     runners = {**DEFAULT_RUNNERS, **(runners or {})}
     i0, i1 = STAGES.index(from_stage), STAGES.index(to_stage)
     if i0 > i1:
@@ -146,10 +157,16 @@ def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "prepro
     for stage in STAGES[i0:i1 + 1]:
         if not force and DONE[stage](cfg, meeting_id):
             log(f"skip  {stage} (already done)")
+            if progress:
+                progress.done(stage)
             results.append((stage, "skip"))
             continue
         log(f"run   {stage} ...")
-        runners[stage](cfg, meeting_id)
+        if progress:
+            progress.stage(stage)
+        runners[stage](cfg, meeting_id, progress)
+        if progress:
+            progress.done(stage)
         log(f"ok    {stage}")
         results.append((stage, "ok"))
     return results
@@ -160,8 +177,9 @@ def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "prepro
 _ENV = {
     "data_root": "BRIEFLY_DATA_ROOT", "vault_dir": "BRIEFLY_VAULT_DIR",
     "whisper_host": "BRIEFLY_WHISPER_HOST", "whisper_port": "BRIEFLY_WHISPER_PORT",
-    "diarize_url": "BRIEFLY_DIARIZE_URL",
+    "diarize_url": "BRIEFLY_DIARIZE_URL", "diarize_mode": "BRIEFLY_DIARIZE_MODE",
     "summarize_model": "BRIEFLY_SUMMARIZE_MODEL", "claude_path": "BRIEFLY_CLAUDE_PATH",
+    "summarize_backend": "BRIEFLY_SUMMARIZE_BACKEND",
 }
 
 
@@ -195,14 +213,19 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--whisper-host")
     p.add_argument("--whisper-port", type=int)
     p.add_argument("--diarize-url")
+    p.add_argument("--diarize-mode", choices=["pyannote", "single"],
+                   help="'single' = VAD fast-path for a one-remote-speaker 1:1 (skips pyannote)")
     p.add_argument("--summarize-model")
+    p.add_argument("--summarize-backend", choices=["auto", "api", "cli"],
+                   help="auto (default): Anthropic SDK if ANTHROPIC_API_KEY set, else the `claude` CLI")
     p.add_argument("--claude-path")
     args = p.parse_args(argv)
     cfg = load_config(args.config, {
         "data_root": args.data_root, "vault_dir": args.vault_dir,
         "whisper_host": args.whisper_host, "whisper_port": args.whisper_port,
-        "diarize_url": args.diarize_url, "summarize_model": args.summarize_model,
-        "claude_path": args.claude_path,
+        "diarize_url": args.diarize_url, "diarize_mode": args.diarize_mode,
+        "summarize_model": args.summarize_model, "claude_path": args.claude_path,
+        "summarize_backend": args.summarize_backend,
     })
     from .state import read_last_meeting
     mid = args.meeting_id or read_last_meeting(Path(cfg.data_root) / "recordings")
@@ -212,8 +235,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if not args.meeting_id:
         print(f"(using last captured meeting: {mid})")
+    from .progress import ProgressReporter
+    reporter = ProgressReporter(cfg.data_root, mid, STAGES, log=print)
     try:
-        results = run_pipeline(cfg, mid, args.from_stage, args.to_stage, args.force)
+        results = run_pipeline(cfg, mid, args.from_stage, args.to_stage, args.force,
+                               progress=reporter)
     except Exception as e:  # stage failures surface here with a clear message
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
@@ -221,3 +247,56 @@ def main(argv: list[str] | None = None) -> int:
         print(f"\nnext: name speakers in {cfg.tx(mid) / 'speakers.json'}, then run\n"
               f"      briefly run --from summarize --to enrich --force")
     return 0
+
+
+# --- status: read a running/finished job's progress -----------------------------------
+
+_MARK = {"done": "[x]", "running": "[>]", "pending": "[ ]"}
+
+
+def _status_lines(cfg: PipelineConfig, mid: str) -> list[str]:
+    """Render the stage map from the live heartbeat, or infer it from artifacts on disk."""
+    from .progress import read_heartbeat
+    hb = read_heartbeat(cfg.data_root, mid)
+    if hb:
+        stages = hb.get("stages", {})
+        marks = "  ".join(f"{_MARK.get(stages.get(s, 'pending'), '[ ]')} {s}" for s in STAGES)
+        pct = round(100 * hb.get("overall_frac", 0.0))
+        detail = f" · {hb['detail']}" if hb.get("detail") else ""
+        el = hb.get("elapsed_sec")
+        elapsed = f" · {int(el // 60)}m{int(el % 60):02d}s" if el is not None else ""
+        return [f"meeting {mid}  (live heartbeat)", f"  {marks}",
+                f"  {pct}% — {hb.get('stage') or 'idle'}{detail}{elapsed}"]
+    inferred = {s: ("done" if DONE[s](cfg, mid) else "pending") for s in STAGES}
+    marks = "  ".join(f"{_MARK[inferred[s]]} {s}" for s in STAGES)
+    nxt = next((s for s in STAGES if inferred[s] == "pending"), None)
+    return [f"meeting {mid}  (inferred from artifacts — no live heartbeat)", f"  {marks}",
+            f"  next: {nxt or 'complete'}"]
+
+
+def status_main(argv: list[str] | None = None) -> int:
+    import time as _time
+    from .progress import read_heartbeat
+    from .state import read_last_meeting
+    p = argparse.ArgumentParser(prog="briefly status",
+                                description="show pipeline progress for a meeting")
+    p.add_argument("--meeting-id")
+    p.add_argument("--config")
+    p.add_argument("--data-root")
+    p.add_argument("--watch", action="store_true", help="repaint every 2s until done")
+    args = p.parse_args(argv)
+    cfg = load_config(args.config, {"data_root": args.data_root})
+    mid = args.meeting_id or read_last_meeting(Path(cfg.data_root) / "recordings")
+    if not mid:
+        print("error: no --meeting-id and no last captured meeting", file=sys.stderr)
+        return 2
+    while True:
+        if args.watch:
+            print("\033[2J\033[H", end="")   # clear screen
+        print("\n".join(_status_lines(cfg, mid)))
+        hb = read_heartbeat(cfg.data_root, mid)
+        finished = (hb is not None and hb.get("overall_frac", 0) >= 0.999) \
+            or (hb is None and DONE["merge"](cfg, mid))
+        if not args.watch or finished:
+            return 0
+        _time.sleep(2)
