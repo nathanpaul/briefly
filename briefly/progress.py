@@ -58,6 +58,12 @@ class ProgressReporter:
         self._frac = 1.0
         self._write(force=True)
 
+    def tick(self) -> None:
+        """Refresh the heartbeat (elapsed time) mid-stage without changing stage/frac —
+        called by the orchestrator's ticker so `briefly status` stays live during a long
+        blocking stage."""
+        self._write(force=True)
+
     def overall_frac(self) -> float:
         total = sum(STAGE_WEIGHTS.get(s, 0.0) for s in self.stages) or 1.0
         acc = 0.0

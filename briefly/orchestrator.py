@@ -12,6 +12,8 @@ import argparse
 import json
 import os
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -107,11 +109,70 @@ DONE = {
 }
 
 
+def _run_stage(work, on_tick=None, interval: float = 5.0, clock=time.monotonic):
+    """Run work() on a thread, calling on_tick(elapsed_sec) every `interval`s until it
+    finishes — so blocking stages (the diarize/transcribe HTTP calls) show they're alive
+    instead of looking frozen. Re-raises any exception raised by work()."""
+    box: dict = {}
+
+    def runner():
+        try:
+            box["ok"] = work()
+        except BaseException as e:  # noqa: BLE001 — ferried to the caller's thread
+            box["err"] = e
+
+    th = threading.Thread(target=runner, daemon=True)
+    t0 = clock()
+    th.start()
+    while True:
+        th.join(timeout=interval)
+        if not th.is_alive():
+            break
+        if on_tick:
+            on_tick(clock() - t0)
+    if "err" in box:
+        raise box["err"]
+    return box.get("ok")
+
+
+def _make_ticker(stage: str, log, progress):
+    """A tick callback that shows elapsed time for a running stage. On a TTY it repaints one
+    line in place; piped/redirected it prints a line per tick. Returns (callback, is_tty)."""
+    is_tty = sys.stdout.isatty()
+
+    def cb(elapsed: float):
+        if progress:
+            progress.tick()
+        msg = f"…{stage} working {int(elapsed)}s"
+        if is_tty:
+            sys.stdout.write(f"\r      {msg}\033[K")
+            sys.stdout.flush()
+        else:
+            log(f"      {msg}")
+
+    return cb, is_tty
+
+
+def _stage_error_hint(e: BaseException) -> str:
+    """A human, actionable one-liner for a stage failure."""
+    msg = f"{type(e).__name__}: {e}"
+    low = str(e).lower()
+    if any(s in low for s in ("connection", "refused", "timed out", "timeout",
+                              "unreachable", "max retries", "failed to establish", "errno")):
+        return f"{msg}  (is the service running and reachable? check the *_URL / host in your .env)"
+    if any(s in low for s in ("no such file", "missing", "not found")):
+        return f"{msg}  (a required input is missing — run the earlier stage first, or --force)"
+    return msg
+
+
 def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "preprocess",
                  to_stage: str = "merge", force: bool = False, runners=None,
-                 log=print, progress=None) -> list[tuple[str, str]]:
+                 log=print, progress=None, tick_interval: float = 5.0,
+                 clock=time.monotonic) -> list[tuple[str, str]]:
     """Run stages [from_stage..to_stage] for one meeting. Returns [(stage, "ok"|"skip")].
-    `progress` (a ProgressReporter) is optional; when given, the heartbeat is kept current."""
+    `progress` (a ProgressReporter) is optional; when given, the heartbeat is kept current.
+    Each stage shows an elapsed ticker while it runs; a failure logs an actionable line and
+    re-raises."""
     runners = {**DEFAULT_RUNNERS, **(runners or {})}
     i0, i1 = STAGES.index(from_stage), STAGES.index(to_stage)
     if i0 > i1:
@@ -127,10 +188,21 @@ def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "prepro
         log(f"run   {stage} ...")
         if progress:
             progress.stage(stage)
-        runners[stage](cfg, meeting_id, progress)
+        cb, is_tty = _make_ticker(stage, log, progress)
+        t0 = clock()
+        try:
+            _run_stage(lambda: runners[stage](cfg, meeting_id, progress),
+                       on_tick=cb, interval=tick_interval, clock=clock)
+        except Exception as e:
+            if is_tty:
+                sys.stdout.write("\r\033[K")
+            log(f"✗ {stage} failed after {clock() - t0:.1f}s — {_stage_error_hint(e)}")
+            raise
+        if is_tty:
+            sys.stdout.write("\r\033[K")
         if progress:
             progress.done(stage)
-        log(f"ok    {stage}")
+        log(f"ok    {stage}  ({clock() - t0:.1f}s)")
         results.append((stage, "ok"))
     return results
 
@@ -260,13 +332,20 @@ def main(argv: list[str] | None = None) -> int:
             print(f"(using last captured meeting: {mid})")
     from .progress import ProgressReporter
     reporter = ProgressReporter(cfg.data_root, mid, STAGES, log=print)
+    t0 = time.monotonic()
     try:
         results = run_pipeline(cfg, mid, args.from_stage, args.to_stage, args.force, progress=reporter)
-    except Exception as e:  # stage failures surface here with a clear message
-        print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
+    except Exception:   # run_pipeline already logged an actionable ✗ line for the failing stage
+        print(f"error: process did not complete for {mid}", file=sys.stderr)
         return 1
-    if args.to_stage == "merge" and dict(results).get("merge") == "ok":
-        print(f"\nnext: name speakers in {cfg.tx(mid) / 'speakers.json'} (optional), then\n"
+    elapsed = time.monotonic() - t0
+    ran = [s for s, st in results if st == "ok"]
+    skipped = [s for s, st in results if st == "skip"]
+    dur = f"{elapsed:.0f}s" if elapsed >= 1 else f"{elapsed:.1f}s"
+    summary = f"{len(ran)} stage(s) in {dur}" if ran else "all stages already done"
+    print(f"\n✓ {mid}: {summary}" + (f"  ({len(skipped)} skipped)" if skipped else ""))
+    if args.to_stage == "merge" and dict(results).get("merge") in ("ok", "skip"):
+        print(f"next: name speakers in {cfg.tx(mid) / 'speakers.json'} (optional), then\n"
               f"      briefly summarize        # write this meeting into the vault")
     return 0
 

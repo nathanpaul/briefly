@@ -114,5 +114,45 @@ class TestOrchestrator(unittest.TestCase):
             self.assertEqual(calls, ["preprocess", "diarize", "transcribe"])
 
 
+class TestStageRunner(unittest.TestCase):
+    def test_run_stage_returns_value(self):
+        from briefly.orchestrator import _run_stage
+        self.assertEqual(_run_stage(lambda: 42), 42)
+
+    def test_run_stage_reraises_worker_exception(self):
+        from briefly.orchestrator import _run_stage
+
+        def boom():
+            raise ValueError("kaboom")
+        with self.assertRaises(ValueError):
+            _run_stage(boom)
+
+    def test_error_hint_flags_connection_issues(self):
+        from briefly.orchestrator import _stage_error_hint
+        self.assertIn("reachable", _stage_error_hint(ConnectionError("Connection refused")))
+
+    def test_error_hint_flags_missing_input(self):
+        from briefly.orchestrator import _stage_error_hint
+        self.assertIn("required input is missing",
+                      _stage_error_hint(FileNotFoundError("no such file: x")))
+
+
+class TestPipelineFailure(unittest.TestCase):
+    def test_failing_stage_logs_actionable_line_and_reraises(self):
+        logs: list = []
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _setup_meeting(root)
+            cfg = PipelineConfig(data_root=str(root), vault_dir=str(root / "vault"))
+
+            def boom(cfg, mid, progress=None):
+                raise RuntimeError("Connection refused")
+            with self.assertRaises(RuntimeError):
+                run_pipeline(cfg, MID, "preprocess", "merge",
+                             runners={"preprocess": boom}, log=logs.append)
+        self.assertTrue(any(line.startswith("✗ preprocess failed") for line in logs))
+        self.assertTrue(any("reachable" in line for line in logs))
+
+
 if __name__ == "__main__":
     unittest.main()
