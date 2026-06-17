@@ -1,12 +1,12 @@
 """Auto-trigger — watch recordings/ for newly finalized meetings and run the pipeline.
 
 The capture stage writes `meeting.json` only when a recording is finalized, so it is the
-app-written "done" sentinel (architecture.md). We watch the local, non-synced `recordings/`
-dir for it — NOT the vault. Single-worker (sequential) polling, stdlib-only; a stage that's
-already reached the target is skipped (orchestrator idempotency), so double-runs are safe.
+"done" sentinel. We watch the local, non-synced `recordings/` dir for it — NOT the vault.
+Single-worker (sequential) polling, stdlib-only; a stage that's already reached the target
+is skipped (orchestrator idempotency), so double-runs are safe.
 
-Default stops at `merge` (so you can name speakers, then `briefly run --from summarize
---force`); use `--to enrich` for fully unattended runs that keep Speaker_N labels.
+Runs the data pipeline to `merge`; turn meetings into vault notes afterwards with
+`briefly summarize`.
 """
 from __future__ import annotations
 
@@ -80,8 +80,6 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--whisper-host")
     p.add_argument("--whisper-port", type=int)
     p.add_argument("--diarize-url")
-    p.add_argument("--summarize-model")
-    p.add_argument("--claude-path")
     p.add_argument("--to", dest="to_stage", default="merge", choices=STAGES)
     p.add_argument("--interval", type=float, default=10.0)
     p.add_argument("--once", action="store_true", help="process current pending meetings and exit")
@@ -89,8 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     cfg = load_config(args.config, {
         "data_root": args.data_root, "vault_dir": args.vault_dir,
         "whisper_host": args.whisper_host, "whisper_port": args.whisper_port,
-        "diarize_url": args.diarize_url, "summarize_model": args.summarize_model,
-        "claude_path": args.claude_path,
+        "diarize_url": args.diarize_url,
     })
     wcfg = WatchConfig(interval=args.interval, to_stage=args.to_stage)
     if args.once:

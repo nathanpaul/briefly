@@ -7,21 +7,24 @@ build/
 dist/
 .venv/
 venv/
+uv.lock
 
 # Pipeline working data (per-meeting; never source-controlled)
 recordings/
 processed/
 transcripts/
-knowledge/
-docs/
-scripts/
 
-# Local scratch
+# Local-only project content (kept on disk, not published)
+docs/
+knowledge/
+scripts/
+CLAUDE.md
+PLAN.md
+
+# Local scratch / secrets (.env.example is the committed template)
 *.part
 .DS_Store
-
-# Local secrets / endpoints (.env.example is the committed template)
 .env
 
-# Machine-local plugin memory (MemSearch) — not source-controlled
+# Machine-local plugin memory (MemSearch)
 .memsearch/

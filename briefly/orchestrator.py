@@ -1,44 +1,38 @@
-"""Orchestrator — chain the file-based stages for one meeting_id:
+"""Orchestrator — chain the file-based data stages for one meeting_id:
 
-    preprocess -> diarize -> transcribe -> merge -> [name speakers] -> summarize -> enrich
+    preprocess -> diarize -> transcribe -> merge
 
-Each stage reads the previous stage's files and writes its own; a stage is SKIPPED if its
-output already exists (resumable) unless --force. Default run stops after `merge` so the
-human can name speakers (transcripts/<id>/speakers.json), then re-run `--from summarize
---force`. Stage runners are injectable for offline tests.
+Each stage reads the previous stage's files and writes its own, and is SKIPPED if its output
+already exists (resumable) unless --force. Turning the transcript into a vault note is a
+separate, final step — `briefly summarize`. Stage runners are injectable for offline tests.
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# diarize BEFORE transcribe: the Wyoming Whisper service is text-only, so we transcribe
-# the line channel per diarization turn (knowledge/cluster/homelab-services.md).
-STAGES = ["preprocess", "diarize", "transcribe", "merge", "summarize", "enrich"]
+# Diarize BEFORE transcribe: the legacy wyoming backend is text-only, so the line channel is
+# transcribed per diarization turn. (whisperx/faster-whisper transcribe whole channels.)
+STAGES = ["preprocess", "diarize", "transcribe", "merge"]
 
 
 @dataclass
 class PipelineConfig:
     data_root: str = "."                  # holds recordings/ processed/ transcripts/
     vault_dir: str = "vault"
-    whisper_host: str = "localhost"       # wyoming-whisper TCP (port-forward or cluster DNS)
+    whisper_host: str = "localhost"       # wyoming-whisper TCP (legacy backend only)
     whisper_port: int = 10300
-    diarize_url: str = "http://localhost:8080/diarize"   # local default; .env / flags override
-    diarize_mode: str = "pyannote"        # "single" = VAD fast-path for a one-remote-speaker 1:1
-    # ASR engine for diarize+transcribe: "whisperx" (GPU box: /asr transcribe + its own /diarize),
-    # "faster-whisper" (CPU service + pyannote), or "wyoming" (legacy text-only + diarization-guided
-    # slicing). Diarize and transcribe stay separate steps for every backend.
+    diarize_url: str = "http://localhost:8000/diarize"   # pyannote-protocol /diarize
+    diarize_mode: str = "pyannote"        # "single" = VAD fast-path for a 1-remote-speaker 1:1
+    # diarize+transcribe engine: "whisperx" (GPU /asr + /diarize), "faster-whisper" (CPU + pyannote),
+    # or "wyoming" (legacy text-only). Diarize and transcribe are separate steps for every backend.
     asr_backend: str = "whisperx"
     whisperx_url: str = "http://localhost:8000/asr"
     faster_whisper_url: str = "http://localhost:8001/asr"
-    summarize_model: str = "claude-opus-4-8"
-    summarize_backend: str = "auto"       # auto: SDK if ANTHROPIC_API_KEY else local `claude` CLI
-    claude_path: str = "claude"
     ffmpeg_path: str = "/opt/homebrew/bin/ffmpeg"
     aec_enabled: bool = True
     timeout_sec: float = 1800
@@ -53,16 +47,9 @@ class PipelineConfig:
         return Path(self.data_root) / "transcripts" / mid
 
 
-# --- helpers to read the manifest (date / attendees) ----------------------------------
-
 def _manifest(cfg: PipelineConfig, mid: str) -> dict:
     mf = cfg.rec(mid) / "meeting.json"
     return json.loads(mf.read_text(encoding="utf-8")) if mf.exists() else {}
-
-
-def notes_path(cfg: PipelineConfig, mid: str) -> Path:
-    date = _manifest(cfg, mid).get("date", "0000-00-00")
-    return Path(cfg.vault_dir) / "20-Meetings" / f"{date}-{mid}.md"
 
 
 # --- stage runners (call the stage modules) -------------------------------------------
@@ -74,13 +61,13 @@ def _run_preprocess(cfg: PipelineConfig, mid: str, progress=None) -> None:
 
 
 def _run_transcribe(cfg: PipelineConfig, mid: str, progress=None) -> None:
-    if cfg.asr_backend in ("whisperx", "faster-whisper"):   # POST /asr: transcribe + word align, no slicing
+    if cfg.asr_backend in ("whisperx", "faster-whisper"):   # POST /asr: transcribe + word-align
         from .clients.asr import AsrConfig, transcribe_meeting_asr
         url = cfg.whisperx_url if cfg.asr_backend == "whisperx" else cfg.faster_whisper_url
         transcribe_meeting_asr(cfg.proc(mid), cfg.tx(mid),
                                AsrConfig(url=url, timeout_sec=cfg.timeout_sec))
         return
-    from .clients.transcribe import TranscribeConfig, transcribe_meeting
+    from .clients.transcribe import TranscribeConfig, transcribe_meeting   # legacy wyoming
     cb = (lambda done, total: progress.update(done / total, f"{done}/{total} utterances")) \
         if progress else None
     transcribe_meeting(cfg.proc(mid), cfg.tx(mid),
@@ -94,9 +81,7 @@ def _run_diarize(cfg: PipelineConfig, mid: str, progress=None) -> None:
         from .clients.diarize import diarize_single
         diarize_single(cfg.proc(mid), cfg.tx(mid))
         return
-    # pyannote-protocol POST /diarize — served by the pyannote service OR WhisperX's own /diarize
-    # endpoint (set diarize_url accordingly). A separate step from transcribe, either way.
-    from .clients.diarize import DiarizeConfig, diarize_meeting
+    from .clients.diarize import DiarizeConfig, diarize_meeting   # pyannote-protocol POST /diarize
     attendees = _manifest(cfg, mid).get("attendees") or []
     diarize_meeting(cfg.proc(mid), cfg.tx(mid),
                     DiarizeConfig(url=cfg.diarize_url, timeout_sec=cfg.timeout_sec,
@@ -108,53 +93,17 @@ def _run_merge(cfg: PipelineConfig, mid: str, progress=None) -> None:
     merge_run(mid, cfg.tx(mid), cfg.rec(mid))
 
 
-def _run_summarize(cfg: PipelineConfig, mid: str, progress=None) -> None:
-    from .summarize import SummarizeConfig, summarize
-    summarize(SummarizeConfig(
-        model=cfg.summarize_model, vault_dir=cfg.vault_dir, claude_path=cfg.claude_path,
-        summarize_backend=cfg.summarize_backend,
-        transcripts_dir=str(Path(cfg.data_root) / "transcripts"),
-        recordings_dir=str(Path(cfg.data_root) / "recordings"),
-    ), mid)
-
-
-def _run_enrich(cfg: PipelineConfig, mid: str, progress=None) -> None:
-    from .enrich import EnrichConfig, enrich_meeting
-    enrich_meeting(notes_path(cfg, mid),
-                   EnrichConfig(vault_dir=cfg.vault_dir, claude_path=cfg.claude_path))
-
-
 DEFAULT_RUNNERS = {
-    "preprocess": _run_preprocess, "transcribe": _run_transcribe, "diarize": _run_diarize,
-    "merge": _run_merge, "summarize": _run_summarize, "enrich": _run_enrich,
+    "preprocess": _run_preprocess, "diarize": _run_diarize,
+    "transcribe": _run_transcribe, "merge": _run_merge,
 }
 
-
-# --- done-predicates (skip a stage when its output already exists) --------------------
-
-_ENRICH_BLOCK = re.compile(
-    r"<!--\s*briefly:enrichment:start\s*-->(.*?)<!--\s*briefly:enrichment:end\s*-->", re.S)
-
-
-def _enriched(cfg: PipelineConfig, mid: str) -> bool:
-    """Enriched = the managed block holds real content (not just markers/placeholder)."""
-    p = notes_path(cfg, mid)
-    if not p.exists():
-        return False
-    m = _ENRICH_BLOCK.search(p.read_text(encoding="utf-8"))
-    if not m:
-        return False
-    inner = re.sub(r"<!--.*?-->", "", m.group(1), flags=re.S)  # drop placeholder comments
-    return bool(inner.strip())
-
-
+# Done-predicates: skip a stage when its output already exists.
 DONE = {
     "preprocess": lambda c, m: (c.proc(m) / "line.16k.wav").exists(),
-    "transcribe": lambda c, m: (c.tx(m) / "line.whisper.json").exists(),
     "diarize": lambda c, m: (c.tx(m) / "line.diarization.json").exists(),
+    "transcribe": lambda c, m: (c.tx(m) / "line.whisper.json").exists(),
     "merge": lambda c, m: (c.tx(m) / "transcript.json").exists(),
-    "summarize": lambda c, m: notes_path(c, m).exists(),
-    "enrich": _enriched,
 }
 
 
@@ -162,7 +111,7 @@ def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "prepro
                  to_stage: str = "merge", force: bool = False, runners=None,
                  log=print, progress=None) -> list[tuple[str, str]]:
     """Run stages [from_stage..to_stage] for one meeting. Returns [(stage, "ok"|"skip")].
-    `progress` (a ProgressReporter) is optional; when given, a heartbeat is kept current."""
+    `progress` (a ProgressReporter) is optional; when given, the heartbeat is kept current."""
     runners = {**DEFAULT_RUNNERS, **(runners or {})}
     i0, i1 = STAGES.index(from_stage), STAGES.index(to_stage)
     if i0 > i1:
@@ -194,14 +143,12 @@ _ENV = {
     "diarize_url": "BRIEFLY_DIARIZE_URL", "diarize_mode": "BRIEFLY_DIARIZE_MODE",
     "asr_backend": "BRIEFLY_ASR_BACKEND", "whisperx_url": "BRIEFLY_WHISPERX_URL",
     "faster_whisper_url": "BRIEFLY_FASTER_WHISPER_URL",
-    "summarize_model": "BRIEFLY_SUMMARIZE_MODEL", "claude_path": "BRIEFLY_CLAUDE_PATH",
-    "summarize_backend": "BRIEFLY_SUMMARIZE_BACKEND",
 }
 
 
 def load_config(path: str | None, overrides: dict) -> PipelineConfig:
     from .dotenv import load_dotenv
-    load_dotenv()  # populate BRIEFLY_* from ./.env (does not override real env vars)
+    load_dotenv()  # populate BRIEFLY_* from ./.env (real env vars / CLI flags still win)
     data: dict = {}
     if path:
         data.update(json.loads(Path(path).read_text(encoding="utf-8")))
@@ -216,10 +163,9 @@ def load_config(path: str | None, overrides: dict) -> PipelineConfig:
 
 
 def main(argv: list[str] | None = None) -> int:
-    p = argparse.ArgumentParser(prog="briefly run",
-                                description="run the meeting pipeline for one meeting_id")
-    p.add_argument("--meeting-id", help="defaults to the last captured meeting "
-                   "(recordings/.last-meeting-id)")
+    p = argparse.ArgumentParser(prog="briefly process",
+                                description="run the data pipeline (preprocess→diarize→transcribe→merge) for one meeting")
+    p.add_argument("--meeting-id", help="defaults to the last captured meeting (recordings/.last-meeting-id)")
     p.add_argument("--from", dest="from_stage", default="preprocess", choices=STAGES)
     p.add_argument("--to", dest="to_stage", default="merge", choices=STAGES)
     p.add_argument("--force", action="store_true", help="re-run stages even if output exists")
@@ -235,10 +181,6 @@ def main(argv: list[str] | None = None) -> int:
                    help="diarize+transcribe engine (default whisperx)")
     p.add_argument("--whisperx-url")
     p.add_argument("--faster-whisper-url")
-    p.add_argument("--summarize-model")
-    p.add_argument("--summarize-backend", choices=["auto", "api", "cli"],
-                   help="auto (default): Anthropic SDK if ANTHROPIC_API_KEY set, else the `claude` CLI")
-    p.add_argument("--claude-path")
     args = p.parse_args(argv)
     cfg = load_config(args.config, {
         "data_root": args.data_root, "vault_dir": args.vault_dir,
@@ -246,8 +188,6 @@ def main(argv: list[str] | None = None) -> int:
         "diarize_url": args.diarize_url, "diarize_mode": args.diarize_mode,
         "asr_backend": args.asr_backend, "whisperx_url": args.whisperx_url,
         "faster_whisper_url": args.faster_whisper_url,
-        "summarize_model": args.summarize_model, "claude_path": args.claude_path,
-        "summarize_backend": args.summarize_backend,
     })
     from .state import read_last_meeting
     mid = args.meeting_id or read_last_meeting(Path(cfg.data_root) / "recordings")
@@ -260,14 +200,13 @@ def main(argv: list[str] | None = None) -> int:
     from .progress import ProgressReporter
     reporter = ProgressReporter(cfg.data_root, mid, STAGES, log=print)
     try:
-        results = run_pipeline(cfg, mid, args.from_stage, args.to_stage, args.force,
-                               progress=reporter)
+        results = run_pipeline(cfg, mid, args.from_stage, args.to_stage, args.force, progress=reporter)
     except Exception as e:  # stage failures surface here with a clear message
         print(f"error: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
     if args.to_stage == "merge" and dict(results).get("merge") == "ok":
-        print(f"\nnext: name speakers in {cfg.tx(mid) / 'speakers.json'}, then run\n"
-              f"      briefly run --from summarize --to enrich --force")
+        print(f"\nnext: name speakers in {cfg.tx(mid) / 'speakers.json'} (optional), then\n"
+              f"      briefly summarize        # write this meeting into the vault")
     return 0
 
 

@@ -1,7 +1,7 @@
 """Local 'last meeting' pointer.
 
 Capture writes the finalized meeting_id to `<recordings_dir>/.last-meeting-id` so that
-`briefly run` (and friends) can default to the most recently captured meeting without
+`briefly process` (and friends) can default to the most recently captured meeting without
 re-typing the ULID.
 """
 from __future__ import annotations

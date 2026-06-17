@@ -1,24 +1,14 @@
-"""Prompt-driven meeting enrichment — `briefly summarize "<instruction>" [--meeting-id <id>]`.
+"""`briefly summarize ["<instruction>"] [--meeting-id <id>]` — the final step: write one meeting
+into the Obsidian vault with headless Claude Code.
 
-Unlike the structured `summarize` stage (a fixed per-person brief) and the fixed
-`/enrich-meeting` skill, this runs headless Claude Code with a USER-PROVIDED instruction over
-one meeting's transcript, writing/enriching the Obsidian vault however you ask for THAT meeting
-— "extract action items and open tasks in 30-Tasks", "one-paragraph exec summary + link each
-person to their MOC", "pull decisions into the project note", etc.
+Pass a custom instruction ("extract action items into 30-Tasks", "exec summary + link each
+person to their MOC", ...) or omit it to use DEFAULT_SUMMARIZE_PROMPT from .env (the built-in
+DEFAULT_PROMPT otherwise). meeting_id defaults to the last captured meeting, or pass --meeting-id.
 
-Routing: `briefly summarize "<prompt>"` (a leading non-flag arg) lands here; `briefly summarize
---meeting-id <id>` (no prompt) stays the structured `summarize` stage (see cli.py).
-
-Safety mirrors `enrich`: the vault is added with `--add-dir`, tools are limited to
-Read,Glob,Grep,Edit,Write (NO Bash — the 40-Personal OS guard must not be bypassable), and
-`--permission-mode acceptEdits`. Claude Code runs with cwd = the vault root so the vault's
-CLAUDE.md + templates + skills load.
-
-PRIVACY: the transcript TEXT is sent to Claude (cloud, via Claude Code), same as the existing
-summarize/enrich stages. Raw audio never leaves the device.
-
-Exit 0 on success; non-zero (with a message on stderr) on a missing meeting/transcript or a
-Claude failure. The subprocess runner is injectable so tests need no `claude` binary.
+Safety: the vault is added via --add-dir, tools limited to Read,Glob,Grep,Edit,Write (NO Bash, so
+the 40-Personal OS guard can't be bypassed), permission-mode acceptEdits, cwd = the vault root.
+PRIVACY: the transcript TEXT goes to Claude (cloud, via Claude Code); raw audio never leaves the
+device. The subprocess runner is injectable so tests need no `claude` binary.
 """
 from __future__ import annotations
 
@@ -27,8 +17,12 @@ import json
 import os
 import subprocess
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
+
+# Used when no instruction is passed AND DEFAULT_SUMMARIZE_PROMPT is unset in the environment.
+DEFAULT_PROMPT = ("Write a concise meeting note: a 2-3 sentence summary, the key decisions, "
+                  "action items with owners, and any open questions.")
 
 
 class SummarizeAgentError(Exception):
@@ -44,7 +38,7 @@ class SummarizeAgentConfig:
     meetings_subdir: str = "20-Meetings"
     claude_path: str = "claude"
     model: str | None = None
-    allowed_tools: str = "Read,Glob,Grep,Edit,Write"   # NO Bash, by design (matches enrich)
+    allowed_tools: str = "Read,Glob,Grep,Edit,Write"   # NO Bash, by design (keeps the 40-Personal guard)
     permission_mode: str = "acceptEdits"
     max_budget_usd: float | None = 1.00
     timeout_sec: float = 1800
@@ -83,11 +77,11 @@ def _read_meeting_meta(cfg: SummarizeAgentConfig, mid: str) -> tuple[str, list[s
 
 
 def _read_transcript(cfg: SummarizeAgentConfig, mid: str) -> str:
-    """The merged, speaker-attributed transcript.txt — required (run `briefly run` first)."""
+    """The merged, speaker-attributed transcript.txt — required (run `briefly process` first)."""
     tp = cfg.tx_dir() / mid / "transcript.txt"
     if not tp.exists():
         raise SummarizeAgentError(
-            f"transcript not found: {tp} — run `briefly run --meeting-id {mid} --to merge` first")
+            f"transcript not found: {tp} — run `briefly process --meeting-id {mid} --to merge` first")
     text = tp.read_text(encoding="utf-8").strip()
     if not text:
         raise SummarizeAgentError(f"transcript is empty: {tp}")
@@ -95,7 +89,7 @@ def _read_transcript(cfg: SummarizeAgentConfig, mid: str) -> str:
 
 
 def note_rel_path(cfg: SummarizeAgentConfig, mid: str, date: str) -> str:
-    """Vault-relative meeting-note path: <meetings_subdir>/<date>-<id>.md (matches summarize)."""
+    """Vault-relative meeting-note path: <meetings_subdir>/<date>-<id>.md."""
     return f"{cfg.meetings_subdir}/{date}-{mid}.md"
 
 
@@ -193,15 +187,14 @@ def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="briefly summarize",
         description=(
-            "Enrich a meeting into the Obsidian vault using a CUSTOM Claude instruction (agentic "
-            "Claude Code). The instruction says how YOU want this particular meeting enriched. "
-            "meeting-id defaults to the last captured meeting. PRIVACY: transcript text goes to "
-            "Claude; raw audio never leaves the device. (Run `briefly summarize` with no prompt "
-            "for the structured per-person summary stage instead.)"),
+            "Write one meeting into the Obsidian vault with Claude Code. Pass a custom instruction, "
+            "or omit it to use DEFAULT_SUMMARIZE_PROMPT. meeting-id defaults to the last captured "
+            "meeting. PRIVACY: transcript text goes to Claude; raw audio never leaves the device."),
         epilog='example: briefly summarize "Pull decisions + action items into the project note, '
-               'and link each attendee to their person note" --meeting-id 01K…',
+               'and link each attendee to their person note"',
     )
-    p.add_argument("prompt", help="how you want Claude to summarize/enrich this meeting into the vault")
+    p.add_argument("prompt", nargs="?", default=None,
+                   help="how to summarize/enrich this meeting; omit to use DEFAULT_SUMMARIZE_PROMPT")
     p.add_argument("--meeting-id", default=None, help="meeting ULID (default: last captured meeting)")
     p.add_argument("--vault-dir", default=None, help="vault root (default: $BRIEFLY_VAULT_DIR or ./vault)")
     p.add_argument("--data-root", default=None, help="holds recordings/ + transcripts/ (default: $BRIEFLY_DATA_ROOT or .)")
@@ -231,9 +224,10 @@ def _config_from(args: argparse.Namespace) -> SummarizeAgentConfig:
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    cfg = _config_from(args)
+    cfg = _config_from(args)   # loads .env (DEFAULT_SUMMARIZE_PROMPT, BRIEFLY_*)
+    prompt = args.prompt or os.environ.get("DEFAULT_SUMMARIZE_PROMPT") or DEFAULT_PROMPT
     try:
-        result = summarize_agent(args.prompt, cfg, meeting_id=args.meeting_id, dry_run=args.dry_run)
+        result = summarize_agent(prompt, cfg, meeting_id=args.meeting_id, dry_run=args.dry_run)
     except SummarizeAgentError as e:
         print(f"error: {e}", file=sys.stderr)
         return e.exit_code

@@ -1,12 +1,7 @@
-"""`briefly` CLI — top-level dispatch to per-stage entrypoints.
+"""`briefly` CLI — top-level dispatch to the per-command entrypoints.
 
-  briefly capture     preflight | record --duration <sec> ...
-  briefly preprocess  --meeting-id <id> ...
-  briefly merge       --meeting-id <id> ...
-  briefly summarize   --meeting-id <id> ...
-
-Each stage owns its own argparse (prog="briefly <stage>"); see that stage's
---help and the matching docs/*-contract.md.
+Workflow: `briefly capture` -> `briefly process` -> `briefly summarize`.
+Each command owns its own argparse (prog="briefly <command>"); run it with --help.
 """
 from __future__ import annotations
 
@@ -21,19 +16,20 @@ from .config import CaptureConfig
 USAGE = """briefly <command> [options]
 
 commands:
-  run         orchestrate the whole pipeline for one meeting_id
-  watch       auto-run the pipeline when a new meeting is captured
+  capture     record two soundcard channels (record --duration | start/stop)
+  process     run the data pipeline (preprocess → diarize → transcribe → merge) for a meeting
+  summarize   write a meeting into the vault — "<prompt>" for a custom pass, or nothing to
+              use DEFAULT_SUMMARIZE_PROMPT (the usual final step)
+  watch       auto-run `process` when a new meeting is captured
   status      show pipeline progress for a meeting (--watch to follow a running job)
-  capture     record (record --duration | start/stop) two soundcard channels
-  preprocess  AEC + de-clip + resample to 16 kHz mono   -> processed/<id>/
-  diarize     pyannote service (line channel)           -> line.diarization.json
-  transcribe  wyoming-whisper (diarization-guided)      -> *.whisper.json
-  merge       whisper + diarization (+ speakers)        -> transcript.json
-  summarize   "<prompt>" enrich a meeting into the vault your way (agentic Claude Code,
-              meeting-id optional); no prompt -> structured per-person summary -> notes.md
-  enrich      enrich notes.md against the vault (Claude Code)
 
-run `briefly <command> --help` for command options.
+individual stages (usually run via `process`):
+  preprocess  AEC + de-clip + resample to 16 kHz mono   -> processed/<id>/
+  diarize     pyannote /diarize (line channel)          -> line.diarization.json
+  transcribe  whisperx /asr (or legacy wyoming)         -> *.whisper.json
+  merge       whisper + diarization (+ speakers)        -> transcript.json
+
+`briefly <command> --help` shows that command's options.
 """
 
 
@@ -93,7 +89,7 @@ def _capture_main(argv: list[str] | None) -> int:
 
     args = p.parse_args(argv)
     cfg = _config_from(args)
-    if not args.recordings_dir:                      # align with `briefly run` via BRIEFLY_DATA_ROOT
+    if not args.recordings_dir:                      # align with `briefly process` via BRIEFLY_DATA_ROOT
         from .dotenv import load_dotenv
         load_dotenv()
         cfg.recordings_dir = str(Path(os.environ.get("BRIEFLY_DATA_ROOT", ".")) / "recordings")
@@ -142,15 +138,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "preprocess":
         from .audio.preprocess import main as preprocess_main
         return preprocess_main(rest)
-    if cmd == "summarize":
-        # `briefly summarize "<prompt>"` (a leading non-flag arg) → prompt-driven vault
-        # enrichment via agentic Claude Code (meeting-id optional, defaults to last). With no
-        # prompt → the structured per-person summary stage (what `briefly run` uses).
-        if rest and not rest[0].startswith("-"):
-            from .summarize_agent import main as summarize_agent_main
-            return summarize_agent_main(rest)
-        from .summarize import main as summarize_main
-        return summarize_main(rest)
+    if cmd == "summarize":   # write a meeting into the vault (prompt or DEFAULT_SUMMARIZE_PROMPT)
+        from .summarize_agent import main as summarize_agent_main
+        return summarize_agent_main(rest)
     if cmd == "transcribe":
         from .clients.transcribe import main as transcribe_main
         return transcribe_main(rest)
@@ -160,12 +150,9 @@ def main(argv: list[str] | None = None) -> int:
     if cmd == "asr":
         from .clients.asr import main as asr_main
         return asr_main(rest)
-    if cmd == "enrich":
-        from .enrich import main as enrich_main
-        return enrich_main(rest)
-    if cmd == "run":
-        from .orchestrator import main as run_main
-        return run_main(rest)
+    if cmd == "process":
+        from .orchestrator import main as process_main
+        return process_main(rest)
     if cmd == "watch":
         from .watch import main as watch_main
         return watch_main(rest)

@@ -182,7 +182,7 @@ def _finalize(cfg: CaptureConfig, mid: str, mdir: Path, started: str,
         channels={"mic": mic_ch, "line": line_ch},
     )
     manifest.write(mdir / "meeting.json")
-    write_last_meeting(mdir.parent, mid)   # recordings/.last-meeting-id — default for `briefly run`
+    write_last_meeting(mdir.parent, mid)   # recordings/.last-meeting-id — default for `briefly process`
     return manifest
 
 

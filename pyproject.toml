@@ -5,15 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "briefly"
 version = "0.1.0"
-description = "Meeting capture → transcript → per-person summary → Claude vault enrichment"
+description = "Meeting capture → transcript → Claude-written Obsidian vault notes"
 requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
-aec = ["numpy>=1.24"]      # real reference-based echo cancellation (briefly.audio.aec)
-summarize = ["anthropic>=0.40"]
-whisper = ["wyoming>=1.5"]  # Wyoming TCP client for wyoming-whisper
+aec = ["numpy>=1.24"]       # real reference-based echo cancellation (briefly.audio.aec)
+whisper = ["wyoming>=1.5"]  # Wyoming TCP client for the legacy wyoming-whisper backend
 
 [project.scripts]
 briefly = "briefly.cli:main"
@@ -23,9 +22,8 @@ briefly-transcribe = "briefly.clients.transcribe:main"
 briefly-diarize = "briefly.clients.diarize:main"
 briefly-asr = "briefly.clients.asr:main"
 briefly-merge = "briefly.merge:main"
-briefly-summarize = "briefly.summarize:main"
-briefly-enrich = "briefly.enrich:main"
-briefly-run = "briefly.orchestrator:main"
+briefly-summarize = "briefly.summarize_agent:main"
+briefly-process = "briefly.orchestrator:main"
 briefly-watch = "briefly.watch:main"
 
 [tool.setuptools.packages.find]

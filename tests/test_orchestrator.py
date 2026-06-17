@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from briefly.models import CaptureInfo, ChannelInfo, MeetingManifest, Transcript
-from briefly.orchestrator import PipelineConfig, notes_path, run_pipeline
+from briefly.orchestrator import PipelineConfig, run_pipeline
 
 MID = "01J9ZC8Q9F7Y3K2N5R6T8W0X1Z"
 _QUIET = lambda *a, **k: None  # noqa: E731
@@ -55,18 +55,8 @@ def _fakes(calls: list):
         cfg.tx(mid).mkdir(parents=True, exist_ok=True)   # diarize now runs before transcribe
         (cfg.tx(mid) / "line.diarization.json").write_text(json.dumps(LINE_DIAR))
 
-    def fake_summarize(cfg, mid, progress=None):
-        calls.append("summarize")
-        p = notes_path(cfg, mid)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text("---\ntype: meeting\n---\n# Note\n"
-                     "<!-- briefly:enrichment:start -->\n<!-- briefly:enrichment:end -->\n")
-
-    def fake_enrich(cfg, mid, progress=None):
-        calls.append("enrich")
-
     return {"preprocess": fake_preprocess, "transcribe": fake_transcribe,
-            "diarize": fake_diarize, "summarize": fake_summarize, "enrich": fake_enrich}
+            "diarize": fake_diarize}
 
 
 class TestOrchestrator(unittest.TestCase):
@@ -76,16 +66,15 @@ class TestOrchestrator(unittest.TestCase):
             root = Path(td)
             _setup_meeting(root)
             cfg = PipelineConfig(data_root=str(root), vault_dir=str(root / "vault"))
-            results = run_pipeline(cfg, MID, "preprocess", "enrich",
+            results = run_pipeline(cfg, MID, "preprocess", "merge",
                                    runners=_fakes(calls), log=_QUIET)
-            self.assertEqual([s for s, _ in results], ["preprocess", "diarize", "transcribe",
-                                                       "merge", "summarize", "enrich"])
+            self.assertEqual([s for s, _ in results],
+                             ["preprocess", "diarize", "transcribe", "merge"])
             self.assertTrue(all(state == "ok" for _, state in results))
             # real merge produced a valid transcript with a "Me" turn and a Speaker_1 turn
             t = Transcript.read(cfg.tx(MID) / "transcript.json")
             self.assertTrue(any(turn.channel == "mic" for turn in t.turns))
             self.assertTrue(any(s.label == "Speaker_1" for s in t.speakers))
-            self.assertTrue(notes_path(cfg, MID).exists())
 
     def test_idempotent_skip_on_rerun(self):
         with tempfile.TemporaryDirectory() as td:
