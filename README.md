@@ -81,6 +81,13 @@ its terms plus <https://hf.co/pyannote/segmentation-3.0>, and set `WHISPERX_DIAR
 briefly watch     # runs `process` on each newly captured meeting; summarize when you're ready
 ```
 
+### Progress & notifications
+- **`capture start`** blocks in the foreground, prints `…recording mm:ss` every 30s (`--notify-interval`), and finalizes on **Ctrl-C**.
+- **`process`** shows a live per-stage ticker (so the long diarize/transcribe calls don't look frozen), per-stage timing, and a recap; a failed stage prints an actionable hint.
+- **`summarize`** streams Claude's edits as they happen (`→ Write meetings/…`), then the result + cost.
+- **`briefly status [--watch]`** shows a running job's progress from another terminal.
+- **Ping when done:** opt in with `--notify` (terminal bell) or `--notify desktop` (macOS notification), or set `NOTIFY=bell`/`NOTIFY=desktop` in `.env`. Off by default.
+
 ## Requirements
 
 | | |
@@ -105,6 +112,7 @@ Real env vars and CLI flags override it.
 | `DEFAULT_SUMMARIZE_PROMPT` | what `briefly summarize` does when you give it no prompt |
 | `ENRICHMENT_PROMPT` | appended to the instruction when you pass `--enrich` (which notes/folders to edit) |
 | `SUMMARIZE_MODEL` | Claude model for `summarize` (default `claude-opus-4-8`) |
+| `NOTIFY` | ping when `process`/`summarize` finish — `bell` or `desktop` (default off; or per-run `--notify`) |
 
 Every stage is also its own command — `briefly {capture,preprocess,diarize,transcribe,merge}` — add
 `--help` to any of them.
