@@ -46,10 +46,10 @@ cp .env.example .env            # defaults already point at the service on local
 
 **3 — Record, process, and summarize a meeting:**
 ```sh
-briefly capture start --attendees "Jane Doe,John Smith"   # records detached; prints a meeting_id
-#   … the meeting happens …
-briefly capture stop
-briefly process                                            # preprocess → diarize → transcribe → merge
+briefly capture start --attendees "Jane Doe,John Smith"   # records in the foreground; Ctrl-C to stop
+#   … the meeting happens; a "…recording mm:ss" notice prints every 30s …
+#   press Ctrl-C when done — it finalizes the recording
+briefly process                                            # preprocess → diarize → transcribe → merge (live progress)
 briefly summarize                                          # write one summary page to your vault root
 #   …or steer the summary for this meeting:
 #   briefly summarize "3-bullet summary + action items with owners"
