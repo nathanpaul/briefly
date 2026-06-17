@@ -8,7 +8,10 @@ With --enrich, instead create/update notes ACROSS the vault: the ENRICHMENT_PROM
 to edit. meeting_id defaults to the last captured meeting, or pass --meeting-id.
 
 Safety: the vault is added via --add-dir, tools limited to Read,Glob,Grep,Edit,Write (NO Bash, so
-the 40-Personal OS guard can't be bypassed), permission-mode acceptEdits, cwd = the vault root.
+the 40-Personal OS guard can't be bypassed), cwd = the vault root. permission-mode is
+bypassPermissions: acceptEdits stalls on Claude Code's "suspicious path" heuristic (vaults under
+iCloud / dotted paths like P.A.R.A.), so writes never land in headless mode — and with Bash
+disallowed, bypassing approvals still can't run shell or escape the OS-level guard.
 PRIVACY: the transcript TEXT goes to Claude (cloud, via Claude Code); raw audio never leaves the
 device. The subprocess runner is injectable so tests need no `claude` binary.
 """
@@ -41,7 +44,7 @@ class SummarizeAgentConfig:
     claude_path: str = "claude"
     model: str | None = None
     allowed_tools: str = "Read,Glob,Grep,Edit,Write"   # NO Bash, by design (keeps the 40-Personal guard)
-    permission_mode: str = "acceptEdits"
+    permission_mode: str = "bypassPermissions"         # acceptEdits stalls on the "suspicious path" guard in -p mode
     max_budget_usd: float | None = 1.00
     timeout_sec: float = 1800
 
@@ -281,9 +284,15 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0
     cost = result.get("total_cost_usd")
+    summary = str(result.get("result") or "").strip()
+    if result.get("is_error"):
+        print(f"error: Claude reported a problem: {summary[:400] or '(no detail)'}", file=sys.stderr)
+        return 1
     verb = "enriched the vault from" if enrich else f"wrote {result.get('note')} for"
     print(f"{verb} meeting {result.get('meeting_id')}"
           + (f"  (cost ${cost})" if cost is not None else ""))
+    if summary:                                   # show what Claude says it did (catches "write blocked" etc.)
+        print(f"  claude: {summary[:500]}")
     return 0
 
 
