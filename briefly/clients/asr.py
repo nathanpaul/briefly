@@ -6,7 +6,7 @@ duration_sec, processing_sec, device, segments:[{start, end, text, words:[...]}]
 `/diarize`, served by the pyannote service OR WhisperX's own `/diarize`), exactly like the WhisperX
 example keeps transcribe/align and diarize as separate steps. `merge` then assigns the line
 transcribe segments to the diarization turns. So `asr_backend` only picks the transcribe engine and
-the path stays interchangeable with the wyoming+pyannote path. See docs/asr-backends.md.
+the path stays interchangeable with the wyoming+pyannote path.
 """
 from __future__ import annotations
 

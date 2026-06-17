@@ -1,10 +1,9 @@
 """Preprocess stage — reference-based AEC + de-clip + normalize + 16 kHz resample.
 
-Implements docs/preprocess-contract.md: turn the raw two-channel capture into clean,
-level-consistent, Whisper-ready 16 kHz mono audio. The core job is to cancel the remote
-audio that leaks from open-back headphones into the studio mic, using the clean LINE
-channel as the far-end reference (reference-based AEC; knowledge/audio-capture/
-gain-and-leakage.md). The line channel is the clean reference and never gets AEC.
+Turn the raw two-channel capture into clean, level-consistent, Whisper-ready 16 kHz mono
+audio. The core job is to cancel the remote audio that leaks from open-back headphones into
+the studio mic, using the clean LINE channel as the far-end reference (reference-based AEC).
+The line channel is the clean reference and never gets AEC.
 
 Deterministic, file-in / file-out. Reads recordings/<id>/{mic.wav,line.wav,meeting.json};
 writes processed/<id>/{mic.16k.wav,line.16k.wav,preprocess.json}. No network. Shells out

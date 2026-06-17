@@ -7,7 +7,7 @@ segments by SLICING the audio and transcribing each slice:
   * MIC channel ("Me"): VAD-segment into utterances -> timestamped segments.
 Output is merge-compatible *.whisper.json. Runs AFTER diarize (needs line.diarization.json).
 The per-utterance transcriber is injectable (default: the Wyoming client) so tests need no
-server. See knowledge/cluster/homelab-services.md.
+server.
 """
 from __future__ import annotations
 

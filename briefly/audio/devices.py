@@ -1,8 +1,7 @@
 """avfoundation device enumeration, probing, and level measurement.
 
 Devices are resolved BY NAME — avfoundation indices reshuffle between runs and a
-wrong index was a silent Steam virtual device (knowledge/hardware/soundcard-cubilux-cb5.md,
-knowledge/audio-capture/capture-findings.md). Recording also targets by name (`-i :NAME`).
+wrong index once resolved to a silent virtual device. Recording also targets by name (`-i :NAME`).
 """
 from __future__ import annotations
 

@@ -1,7 +1,7 @@
 """Merge stage — combine per-channel Whisper + pyannote diarization + optional
 human speaker map into the canonical transcript.json (+ transcript.txt).
 
-Implements docs/orchestrator-merge-contract.md. Merging ONLY — no transcription,
+Merging ONLY — no transcription,
 diarization, summarization, or auto-naming. Deterministic, file-in/file-out,
 stdlib-only (no third-party deps): identical inputs ⇒ byte-identical output.
 

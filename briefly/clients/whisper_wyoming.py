@@ -1,7 +1,7 @@
 """Wyoming-protocol Whisper client.
 
-The homelab Whisper is `rhasspy/wyoming-whisper` — the Wyoming protocol over TCP :10300,
-text-only (knowledge/cluster/homelab-services.md). This sends ONE utterance's 16 kHz mono
+`rhasspy/wyoming-whisper` speaks the Wyoming protocol over TCP :10300 and is text-only.
+This sends ONE utterance's 16 kHz mono
 PCM16 and returns the transcript text. The `wyoming` package is an optional extra
 ([whisper]); it is lazy-imported so this module loads without it, and the transcribe call
 is injectable in the stage so tests need neither the package nor a server.

@@ -14,12 +14,13 @@ recordings/
 processed/
 transcripts/
 
-# Local-only project content (kept on disk, not published)
+# Local-only project content (kept on disk, not published).
+# CLAUDE.md/PLAN.md are anchored to the repo root so vault-template/.claude/CLAUDE.md still ships.
 docs/
 knowledge/
 scripts/
-CLAUDE.md
-PLAN.md
+/CLAUDE.md
+/PLAN.md
 
 # Local scratch / secrets (.env.example is the committed template)
 *.part

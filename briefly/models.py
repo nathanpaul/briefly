@@ -1,6 +1,6 @@
 """Shared data models. Start with the capture manifest (meeting.json).
 
-Output schema is docs/capture-contract.md → Output: meeting.json (schema_version 1.0).
+The capture manifest is meeting.json (schema_version 1.0).
 Plain dataclasses (no third-party deps) so capture runs on a stock Python.
 """
 from __future__ import annotations
@@ -162,7 +162,7 @@ class Turn:
 
 @dataclass
 class Transcript:
-    """Canonical merged transcript (transcript.json). See docs/orchestrator-merge-contract.md."""
+    """Canonical merged transcript (transcript.json)."""
     meeting_id: str
     date: str
     generated_at: str | None
@@ -218,7 +218,7 @@ class Transcript:
 
 @dataclass
 class SpeakersMap:
-    """Human speaker naming + corrections (speakers.json). See docs/speaker-naming-and-retrigger.md."""
+    """Human speaker naming + corrections (speakers.json)."""
     meeting_id: str
     map: dict[str, str] = field(default_factory=dict)
     corrections: list[dict] = field(default_factory=list)

@@ -1,8 +1,7 @@
 """Diarize client — POST the cleaned LINE channel to the pyannote service and write
 `line.diarization.json` ({model, duration_sec, num_speakers, segments:[{speaker, start,
 end}]}) — exactly what `merge` consumes. Only the line (remote) channel is diarized;
-the mic channel is deterministically "Me". Matches the service in
-knowledge/cluster/pyannote-deployment.md.
+the mic channel is deterministically "Me".
 """
 from __future__ import annotations
 
@@ -61,7 +60,7 @@ def diarize_single(processed_dir: str | Path, transcripts_dir: str | Path,
     cleaned LINE channel and label every speech span as one speaker. The output is
     schema-compatible with the pyannote service response, so `transcribe` (slices the line by
     these spans) and `merge` are unchanged. Milliseconds, no network. Only correct when the
-    line channel really is one speaker — opt in per meeting (see docs/diarize-parallel.md)."""
+    line channel really is one speaker — opt in per meeting."""
     src = Path(processed_dir) / "line.16k.wav"
     if not src.exists():
         raise FileNotFoundError(f"missing cleaned line audio: {src}")

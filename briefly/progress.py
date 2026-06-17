@@ -5,7 +5,7 @@ A tiny reporter that writes a throttled JSON heartbeat to
 watched from another terminal — and optionally prints intra-stage lines for the foreground run.
 
 Optional everywhere: pass `progress=None` for the original silent behavior (tests + programmatic
-callers are unaffected). See docs/progress-reporting.md.
+callers are unaffected).
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import json
 import time
 from pathlib import Path
 
-# Overall-% weights; diarize + transcribe dominate the wall-clock (see knowledge/test-results/).
+# Overall-% weights; diarize + transcribe dominate the wall-clock.
 STAGE_WEIGHTS = {
     "preprocess": 0.15, "diarize": 0.45, "transcribe": 0.35, "merge": 0.05,
     "summarize": 0.0, "enrich": 0.0,

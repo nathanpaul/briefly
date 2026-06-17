@@ -1,7 +1,7 @@
 """Capture stage — record the two soundcard inputs and write meeting.json.
 
-Implements docs/capture-contract.md: resolve by name, preflight, mint ULID,
-dual-process simultaneous capture at native rate (raw, no resample), finalize with
+Resolve devices by name, preflight, mint ULID, dual-process simultaneous
+capture at native rate (raw, no resample), finalize with
 level/clip measurement + start-offset, atomic immutable output. Capture ONLY — no
 resample/AEC/de-clip/transcribe (those are later stages).
 """

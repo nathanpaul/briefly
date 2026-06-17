@@ -2,7 +2,7 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://briefly/schemas/preprocess.schema.json",
   "title": "Briefly preprocess report (preprocess.json)",
-  "description": "Records what the preprocess stage measured and applied (AEC + de-clip + normalize + 16 kHz resample). See docs/preprocess-contract.md.",
+  "description": "Records what the preprocess stage measured and applied (AEC + de-clip + normalize + 16 kHz resample).",
   "type": "object",
   "required": [
     "schema_version",

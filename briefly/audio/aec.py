@@ -2,8 +2,8 @@
 
 Cancels the leaked far-end (LINE / remote) audio from the near-end (MIC / "Me") channel.
 The LINE channel is the exact far-end reference, so a least-squares (Wiener) estimate of the
-echo path ref→mic, subtracted from the mic, removes the headphone→mic leakage measured in
-knowledge/audio-capture/gain-and-leakage.md (a self-keyed gate cannot — verified).
+echo path ref→mic, subtracted from the mic, removes the measured headphone→mic leakage
+(a self-keyed noise gate cannot — verified).
 
 The leakage path (same headphones/position for a meeting) is time-invariant, so one FIR
 filter estimated on a capped window and applied to the whole signal is both correct and

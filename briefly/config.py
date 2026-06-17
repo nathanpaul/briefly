@@ -1,8 +1,6 @@
 """Configuration defaults. CLI flags override; a future capture.yaml may too.
 
-Defaults match docs/capture-contract.md and knowledge/ (device names, ffmpeg path).
-Devices are addressed BY NAME — avfoundation indices are unstable
-(knowledge/hardware/soundcard-cubilux-cb5.md).
+Devices are addressed BY NAME — avfoundation indices are unstable between runs.
 """
 from __future__ import annotations
 
