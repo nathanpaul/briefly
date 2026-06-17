@@ -191,7 +191,8 @@ def _finalize(cfg: CaptureConfig, mid: str, mdir: Path, started: str,
 
 
 def record(cfg: CaptureConfig, attendees: list[str] | None = None,
-           duration: float | None = None, skip_preflight: bool = False) -> tuple[MeetingManifest, Path]:
+           duration: float | None = None, skip_preflight: bool = False,
+           notify_interval: float = 30.0) -> tuple[MeetingManifest, Path]:
     """Record both channels for a fixed duration (or until Ctrl-C) and write an immutable
     recordings/<id>/. For meetings of unknown length use start()/stop()."""
     attendees = attendees or []
@@ -210,6 +211,8 @@ def record(cfg: CaptureConfig, attendees: list[str] | None = None,
             t_line = time.time()
             p_line = _spawn(cfg, cfg.line_device, mdir / "line.wav.part", duration, log)
             try:
+                _monitor(lambda: p_mic.poll() is None and p_line.poll() is None,
+                         notify_interval=notify_interval)
                 p_mic.wait()
                 p_line.wait()
             except KeyboardInterrupt:
@@ -260,6 +263,41 @@ def _wait_pids(pids: list[int], timeout: float = 30.0) -> None:
             time.sleep(0.1)
 
 
+def _pid_alive(pid: int) -> bool:
+    """True if pid still exists (PermissionError ⇒ exists but not ours)."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+
+
+def _fmt_elapsed(seconds: float) -> str:
+    s = int(seconds)
+    return f"{s // 3600:02d}:{(s % 3600) // 60:02d}:{s % 60:02d}"
+
+
+def _monitor(is_running, notify_interval: float = 30.0, log=print,
+             clock=time.monotonic, sleep=time.sleep) -> str:
+    """Block while is_running() is True, printing an elapsed notice every notify_interval s.
+
+    Returns 'ended' when the recorders stop on their own (duration reached / a channel died).
+    KeyboardInterrupt propagates to the caller (the intentional stop). clock/sleep/is_running
+    are injectable so the loop is testable without real processes or wall-clock waits.
+    """
+    t0 = clock()
+    next_notice = notify_interval
+    while is_running():
+        elapsed = clock() - t0
+        if notify_interval > 0 and elapsed >= next_notice:
+            log(f"  …recording {_fmt_elapsed(elapsed)}")
+            next_notice += notify_interval
+        sleep(1.0)
+    return "ended"
+
+
 def _find_active_session(cfg: CaptureConfig, meeting_id: str | None) -> Path:
     root = Path(cfg.recordings_dir)
     if meeting_id:
@@ -297,3 +335,24 @@ def stop(cfg: CaptureConfig, meeting_id: str | None = None) -> tuple[MeetingMani
     except OSError:
         pass
     return manifest, mdir
+
+
+def start_foreground(cfg: CaptureConfig, attendees: list[str] | None = None,
+                     skip_preflight: bool = False, notify_interval: float = 30.0,
+                     log=print) -> tuple[MeetingManifest, Path]:
+    """Open-ended recording that BLOCKS the CLI, printing an elapsed notice every
+    `notify_interval` seconds, until Ctrl-C — a clean stop (partial only if a channel
+    truncated). ffmpeg is detached, so the recording survives a terminal crash and a later
+    `briefly capture stop` can still recover it.
+    """
+    mid, mdir = start(cfg, attendees=attendees, skip_preflight=skip_preflight)
+    log(f"● recording {mid}  (mic + line) — press Ctrl-C to stop")
+    state = json.loads((mdir / _STATE).read_text(encoding="utf-8"))
+    pids = [state["mic_pid"], state["line_pid"]]
+    try:
+        if _monitor(lambda: all(_pid_alive(p) for p in pids),
+                    notify_interval=notify_interval, log=log) == "ended":
+            log("⚠ a recorder exited early — finalizing what was captured")
+    except KeyboardInterrupt:
+        log("\n■ stopping — finalizing recording …")
+    return stop(cfg, meeting_id=mid)

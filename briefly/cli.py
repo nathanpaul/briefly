@@ -16,7 +16,7 @@ from .config import CaptureConfig
 USAGE = """briefly <command> [options]
 
 commands:
-  capture     record two soundcard channels (record --duration | start/stop)
+  capture     record two soundcard channels (start = open-ended, Ctrl-C to stop; or record --duration)
   process     run the data pipeline (preprocess → diarize → transcribe → merge) for a meeting
   summarize   write a meeting into the vault — "<prompt>" for a custom pass, or nothing to
               use DEFAULT_SUMMARIZE_PROMPT (the usual final step)
@@ -76,12 +76,17 @@ def _capture_main(argv: list[str] | None) -> int:
     rec.add_argument("--attendees", default="")
     rec.add_argument("--mode", default=None)
     rec.add_argument("--no-preflight", action="store_true")
+    rec.add_argument("--notify-interval", type=float, default=30.0,
+                     help="seconds between 'still recording' notices (0 = silent)")
 
-    st = csub.add_parser("start", help="begin an open-ended recording (finish with `stop`)")
+    st = csub.add_parser("start",
+                         help="record open-ended in the foreground; Ctrl-C stops & finalizes")
     _add_common(st)
     st.add_argument("--attendees", default="")
     st.add_argument("--mode", default=None)
     st.add_argument("--no-preflight", action="store_true")
+    st.add_argument("--notify-interval", type=float, default=30.0,
+                    help="seconds between 'still recording' notices (0 = silent)")
 
     sp = csub.add_parser("stop", help="finalize the recording started with `start`")
     _add_common(sp)
@@ -105,15 +110,16 @@ def _capture_main(argv: list[str] | None) -> int:
         if args.capcmd == "record":
             attendees = [a.strip() for a in args.attendees.split(",") if a.strip()]
             manifest, mdir = cap.record(cfg, attendees=attendees, duration=args.duration,
-                                        skip_preflight=args.no_preflight)
+                                        skip_preflight=args.no_preflight,
+                                        notify_interval=args.notify_interval)
             _print_manifest(manifest, mdir)
             return 0
         if args.capcmd == "start":
             attendees = [a.strip() for a in args.attendees.split(",") if a.strip()]
-            mid, mdir = cap.start(cfg, attendees=attendees, skip_preflight=args.no_preflight)
-            print(f"meeting_id: {mid}")
-            print(f"recordings: {mdir}")
-            print("recording in the background — run `briefly capture stop` to finish.")
+            manifest, mdir = cap.start_foreground(cfg, attendees=attendees,
+                                                  skip_preflight=args.no_preflight,
+                                                  notify_interval=args.notify_interval)
+            _print_manifest(manifest, mdir)
             return 0
         if args.capcmd == "stop":
             manifest, mdir = cap.stop(cfg, meeting_id=args.meeting_id)
