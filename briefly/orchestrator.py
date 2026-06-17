@@ -30,6 +30,7 @@ class PipelineConfig:
     whisper_port: int = 10300
     diarize_url: str = "http://localhost:8000/diarize"   # pyannote-protocol /diarize
     diarize_mode: str = "pyannote"        # "single" = VAD fast-path for a 1-remote-speaker 1:1
+    num_speakers: int | None = None       # exact total speaker count to constrain diarization (a correction)
     # diarize+transcribe engine: "whisperx" (GPU /asr + /diarize), "faster-whisper" (CPU + pyannote),
     # or "wyoming" (legacy text-only). Diarize and transcribe are separate steps for every backend.
     asr_backend: str = "whisperx"
@@ -78,16 +79,31 @@ def _run_transcribe(cfg: PipelineConfig, mid: str, progress=None) -> None:
                        on_progress=cb)
 
 
+def _line_speaker_target(num_speakers: int | None, has_mic: bool) -> int | None:
+    """Map a meeting's TOTAL speaker count to the diarized line/remote target. The mic ("Me")
+    is one speaker and is never diarized, so subtract it when a mic channel exists. None ⇒ let
+    pyannote decide. Clamped to ≥1."""
+    if num_speakers is None:
+        return None
+    return max(1, num_speakers - 1) if has_mic else max(1, num_speakers)
+
+
 def _run_diarize(cfg: PipelineConfig, mid: str, progress=None) -> None:
     if cfg.diarize_mode == "single":   # 1:1 fast-path: VAD-segment line, one speaker, no pyannote
         from .clients.diarize import diarize_single
         diarize_single(cfg.proc(mid), cfg.tx(mid))
         return
     from .clients.diarize import DiarizeConfig, diarize_meeting   # pyannote-protocol POST /diarize
-    attendees = _manifest(cfg, mid).get("attendees") or []
-    diarize_meeting(cfg.proc(mid), cfg.tx(mid),
-                    DiarizeConfig(url=cfg.diarize_url, timeout_sec=cfg.timeout_sec,
-                                  max_speakers=len(attendees) or None))
+    manifest = _manifest(cfg, mid)
+    has_mic = "mic" in (manifest.get("channels") or {})
+    target = _line_speaker_target(cfg.num_speakers, has_mic)
+    if target is not None:             # explicit correction → force exactly this many line speakers
+        dcfg = DiarizeConfig(url=cfg.diarize_url, timeout_sec=cfg.timeout_sec, num_speakers=target)
+    else:                              # default: cap at the attendee count (a soft upper bound)
+        attendees = manifest.get("attendees") or []
+        dcfg = DiarizeConfig(url=cfg.diarize_url, timeout_sec=cfg.timeout_sec,
+                             max_speakers=len(attendees) or None)
+    diarize_meeting(cfg.proc(mid), cfg.tx(mid), dcfg)
 
 
 def _run_merge(cfg: PipelineConfig, mid: str, progress=None) -> None:
@@ -297,6 +313,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--diarize-url")
     p.add_argument("--diarize-mode", choices=["pyannote", "single"],
                    help="'single' = VAD fast-path for a one-remote-speaker 1:1 (skips pyannote)")
+    p.add_argument("--num-speakers", type=int, default=None,
+                   help="correct the speaker count: total distinct speakers in the meeting (you/the "
+                        "mic counts as one). Forces diarization to exactly that many. Re-run with "
+                        "--from diarize --to merge --force to apply.")
     p.add_argument("--asr-backend", choices=["whisperx", "faster-whisper", "wyoming"],
                    help="diarize+transcribe engine (default whisperx)")
     p.add_argument("--whisperx-url")
@@ -307,7 +327,7 @@ def main(argv: list[str] | None = None) -> int:
         "whisper_host": args.whisper_host, "whisper_port": args.whisper_port,
         "diarize_url": args.diarize_url, "diarize_mode": args.diarize_mode,
         "asr_backend": args.asr_backend, "whisperx_url": args.whisperx_url,
-        "faster_whisper_url": args.faster_whisper_url,
+        "faster_whisper_url": args.faster_whisper_url, "num_speakers": args.num_speakers,
     })
     if args.from_file:
         if args.meeting_id:
@@ -330,6 +350,8 @@ def main(argv: list[str] | None = None) -> int:
             return 2
         if not args.meeting_id:
             print(f"(using last captured meeting: {mid})")
+    if cfg.num_speakers is not None:
+        print(f"(diarizing for exactly {cfg.num_speakers} total speaker(s))")
     from .progress import ProgressReporter
     reporter = ProgressReporter(cfg.data_root, mid, STAGES, log=print)
     t0 = time.monotonic()
@@ -345,8 +367,9 @@ def main(argv: list[str] | None = None) -> int:
     summary = f"{len(ran)} stage(s) in {dur}" if ran else "all stages already done"
     print(f"\n✓ {mid}: {summary}" + (f"  ({len(skipped)} skipped)" if skipped else ""))
     if args.to_stage == "merge" and dict(results).get("merge") in ("ok", "skip"):
-        print(f"next: name speakers in {cfg.tx(mid) / 'speakers.json'} (optional), then\n"
-              f"      briefly summarize        # write this meeting into the vault")
+        print(f"next: briefly summarize        # write this meeting into the vault")
+        print(f"      (name speakers in {cfg.tx(mid) / 'speakers.json'}; wrong speaker count? re-run\n"
+              f"       briefly process --from diarize --to merge --force --num-speakers N)")
     return 0
 
 

@@ -87,9 +87,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--processed-dir", default="processed")
     p.add_argument("--transcripts-dir", default="transcripts")
     p.add_argument("--url", required=True, help="pyannote /diarize endpoint")
+    p.add_argument("--num-speakers", type=int, default=None, help="force exactly this many speakers")
+    p.add_argument("--min-speakers", type=int, default=None)
     p.add_argument("--max-speakers", type=int, default=None)
     args = p.parse_args(argv)
-    cfg = DiarizeConfig(url=args.url, max_speakers=args.max_speakers)
+    cfg = DiarizeConfig(url=args.url, num_speakers=args.num_speakers,
+                        min_speakers=args.min_speakers, max_speakers=args.max_speakers)
     try:
         out = diarize_meeting(Path(args.processed_dir) / args.meeting_id,
                               Path(args.transcripts_dir) / args.meeting_id, cfg)

@@ -137,6 +137,32 @@ class TestStageRunner(unittest.TestCase):
                       _stage_error_hint(FileNotFoundError("no such file: x")))
 
 
+class TestNumSpeakers(unittest.TestCase):
+    def test_line_target_subtracts_mic(self):
+        from briefly.orchestrator import _line_speaker_target
+        self.assertIsNone(_line_speaker_target(None, has_mic=True))
+        self.assertEqual(_line_speaker_target(2, has_mic=True), 1)    # Me + 1 remote
+        self.assertEqual(_line_speaker_target(3, has_mic=True), 2)
+        self.assertEqual(_line_speaker_target(2, has_mic=False), 2)   # imported file, no mic
+        self.assertEqual(_line_speaker_target(1, has_mic=True), 1)    # clamp to ≥1
+
+    def test_run_diarize_forwards_num_speakers(self):
+        from unittest import mock
+        import briefly.orchestrator as orch
+        captured: dict = {}
+
+        def fake_diarize_meeting(pdir, tdir, cfg, post=None):
+            captured["cfg"] = cfg
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            _setup_meeting(root)                              # manifest has mic + line
+            cfg = PipelineConfig(data_root=str(root), num_speakers=2)
+            with mock.patch("briefly.clients.diarize.diarize_meeting", fake_diarize_meeting):
+                orch._run_diarize(cfg, MID)
+        self.assertEqual(captured["cfg"].num_speakers, 1)     # 2 total − mic
+        self.assertIsNone(captured["cfg"].max_speakers)
+
+
 class TestPipelineFailure(unittest.TestCase):
     def test_failing_stage_logs_actionable_line_and_reraises(self):
         logs: list = []

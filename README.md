@@ -65,6 +65,11 @@ briefly process --from-file ./standup.m4a                  # imports it as a new
 
 `process` and `summarize` both default to the **last captured (or imported) meeting** (or pass `--meeting-id <id>`).
 
+**Diarization found the wrong number of speakers?** Re-diarize with the exact total (you/the mic counts as one):
+```sh
+briefly process --from diarize --to merge --force --num-speakers 2
+```
+
 ### Hugging Face access (one-time)
 The diarization model is gated. Create a **read token** at <https://hf.co/settings/tokens>, accept the
 terms for **<https://hf.co/pyannote/speaker-diarization-community-1>** (the default model), and put the
