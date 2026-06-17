@@ -1,6 +1,28 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from briefly.ids import is_ulid, new_ulid
+from briefly.ids import is_ulid, new_ulid, next_meeting_id
+
+
+class TestNextMeetingId(unittest.TestCase):
+    def test_first_id_is_0001(self):
+        with TemporaryDirectory() as td:
+            self.assertEqual(next_meeting_id(td), "meeting_0001")
+
+    def test_increments_past_highest(self):
+        with TemporaryDirectory() as td:
+            for name in ("meeting_0001", "meeting_0003", "not-a-meeting", "meeting_x"):
+                (Path(td) / name).mkdir()
+            self.assertEqual(next_meeting_id(td), "meeting_0004")  # max(1,3)+1, ignores non-matches
+
+    def test_custom_prefix(self):
+        with TemporaryDirectory() as td:
+            (Path(td) / "sync_0007").mkdir()
+            self.assertEqual(next_meeting_id(td, prefix="sync_"), "sync_0008")
+
+    def test_missing_dir_starts_at_one(self):
+        self.assertEqual(next_meeting_id("/no/such/dir/here"), "meeting_0001")
 
 
 class TestUlid(unittest.TestCase):

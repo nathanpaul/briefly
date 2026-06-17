@@ -21,3 +21,4 @@ class CaptureConfig:
     probe_sec: int = 3
     ffmpeg_path: str = "/opt/homebrew/bin/ffmpeg"
     recordings_dir: str = "recordings"
+    meeting_id_prefix: str = "meeting_"         # $MEETING_ID_PREFIX → ids like meeting_0001

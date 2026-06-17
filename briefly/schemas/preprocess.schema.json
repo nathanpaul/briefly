@@ -22,7 +22,7 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {"const": "1.0"},
-    "meeting_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "meeting_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
     "generated_at": {"type": "string"},
     "aec_enabled": {
       "type": "boolean",
@@ -32,7 +32,7 @@
       "type": "number",
       "description": "line→mic alignment delay actually used for AEC."
     },
-    "delay_source": {"enum": ["meeting.json", "xcorr", "meeting.json+xcorr"]},
+    "delay_source": {"enum": ["none", "meeting.json", "xcorr", "meeting.json+xcorr"]},
     "estimated_echo_reduction_db": {
       "type": ["number", "null"],
       "description": "Drop in the mic's correlation-with-line energy after AEC; null when AEC not applied."
@@ -49,7 +49,7 @@
     "resample_rate": {"type": "integer"},
     "channels": {
       "type": "object",
-      "required": ["mic", "line"],
+      "required": ["line"],
       "additionalProperties": false,
       "properties": {
         "mic": {"$ref": "#/$defs/channel"},

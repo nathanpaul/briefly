@@ -483,10 +483,12 @@ def merge(
     # Step 5: stable Speaker_N numbering by first appearance.
     numbering = _number_speakers(units)
 
-    # Build the speakers[] list. "Me" always present (mic channel).
-    speakers: list[Speaker] = [
-        Speaker(id="me", label="Me", channel="mic", source="channel")
-    ]
+    # Build the speakers[] list. "Me" present only when there is a mic channel with speech
+    # (single-file/imported meetings have no mic, so no "Me").
+    has_mic = bool(mic.segments)
+    speakers: list[Speaker] = (
+        [Speaker(id="me", label="Me", channel="mic", source="channel")] if has_mic else []
+    )
     for raw, n in sorted(numbering.items(), key=lambda kv: kv[1]):
         speakers.append(
             Speaker(id=f"s{n}", label=f"Speaker_{n}", channel="line",
@@ -675,7 +677,10 @@ def run(meeting_id: str, transcripts_dir: str | Path, recordings_dir: str | Path
             f"{manifest.meeting_id!r}"
         )
 
-    mic = WhisperDoc.from_dict(_load_json(tdir / "mic.whisper.json", "mic.whisper.json"))
+    # `mic` is optional: single-file/imported meetings (`--from-file`) have no "Me" channel.
+    mic_path = tdir / "mic.whisper.json"
+    mic = (WhisperDoc.from_dict(_load_json(mic_path, "mic.whisper.json")) if mic_path.exists()
+           else WhisperDoc(language=None, duration_sec=None, segments=[]))
     line = WhisperDoc.from_dict(_load_json(tdir / "line.whisper.json", "line.whisper.json"))
     diar = DiarDoc.from_dict(_load_json(tdir / "line.diarization.json", "line.diarization.json"))
 

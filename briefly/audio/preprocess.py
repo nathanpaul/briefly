@@ -426,12 +426,15 @@ def preprocess(meeting_id: str, recordings_dir: str | Path,
     except Exception as e:  # noqa: BLE001
         raise InputError(f"invalid meeting.json {manifest_path}: {e}") from e
 
-    if "mic" not in manifest.channels or "line" not in manifest.channels:
-        raise InputError("meeting.json must define both 'mic' and 'line' channels")
+    if "line" not in manifest.channels:
+        raise InputError("meeting.json must define a 'line' channel")
+    # Single-file / imported meetings (`briefly process --from-file`) have only a line channel,
+    # no mic ("Me"). With no mic there is no near-end to clean and no echo to cancel.
+    has_mic = "mic" in manifest.channels
 
-    mic_in = in_dir / manifest.channels["mic"].file
     line_in = in_dir / manifest.channels["line"].file
-    for p in (mic_in, line_in):
+    mic_in = (in_dir / manifest.channels["mic"].file) if has_mic else None
+    for p in ([mic_in, line_in] if has_mic else [line_in]):
         if not p.exists() or p.stat().st_size <= 44:  # 44 = empty WAV header
             raise InputError(f"missing/empty required input: {p}")
         if dev.wav_info(p)[0] is None:
@@ -443,55 +446,56 @@ def preprocess(meeting_id: str, recordings_dir: str | Path,
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # ---- before-levels (raw) -------------------------------------------------
-    mic_before = _levels(mic_in, cfg)
     line_before = _levels(line_in, cfg)
+    mic_before = _levels(mic_in, cfg) if has_mic else None
 
-    # ---- Step 1: alignment ---------------------------------------------------
-    coarse = coarse_delay_sec(manifest)
-    delay = coarse
-    delay_source = "meeting.json"
+    # ---- Step 1: alignment (only meaningful with a separate mic channel) -----
+    delay = 0.0
+    delay_source = "none"
     line_silent = (line_before["mean_dbfs"] is None
                    or line_before["mean_dbfs"] <= cfg.silence_floor_dbfs)
-
-    if cfg.xcorr_refine and not line_silent:
-        refined = refine_delay_xcorr(mic_in, line_in, coarse)
-        if refined is not None:
-            delay = round(refined, 4)
-            delay_source = "meeting.json+xcorr"
-        else:
-            warnings.append("xcorr refinement unavailable (audio too short/silent); "
-                            "using manifest delay.")
+    if has_mic:
+        coarse = coarse_delay_sec(manifest)
+        delay = coarse
+        delay_source = "meeting.json"
+        if cfg.xcorr_refine and not line_silent:
+            refined = refine_delay_xcorr(mic_in, line_in, coarse)
+            if refined is not None:
+                delay = round(refined, 4)
+                delay_source = "meeting.json+xcorr"
+            else:
+                warnings.append("xcorr refinement unavailable (audio too short/silent); "
+                                "using manifest delay.")
 
     # ---- Step 2: reference-based AEC on the mic (line never gets AEC) ---------
-    mic_work = out_dir / "mic.aec.wav"
-    aec_requested = cfg.aec_enabled
-    if not aec_requested:
-        aec_info = {"applied": False, "reduction_db": None, "backend": None}
-        _ffmpeg_copy(mic_in, mic_work, cfg)
-    elif line_silent:
-        warnings.append("line channel is silent (no far-end reference); skipping AEC "
-                        "(no echo to cancel).")
-        aec_info = {"applied": False, "reduction_db": None, "backend": None}
-        _ffmpeg_copy(mic_in, mic_work, cfg)
-    else:
-        aec_info = _run_aec(mic_in, line_in, delay, cfg, mic_work, warnings)
+    aec_requested = cfg.aec_enabled and has_mic
+    aec_info = {"applied": False, "reduction_db": None, "backend": None}
+    mic_out = out_dir / "mic.16k.wav"
+    line_out = out_dir / "line.16k.wav"
+    if has_mic:
+        mic_work = out_dir / "mic.aec.wav"
+        if not aec_requested:
+            _ffmpeg_copy(mic_in, mic_work, cfg)
+        elif line_silent:
+            warnings.append("line channel is silent (no far-end reference); skipping AEC "
+                            "(no echo to cancel).")
+            _ffmpeg_copy(mic_in, mic_work, cfg)
+        else:
+            aec_info = _run_aec(mic_in, line_in, delay, cfg, mic_work, warnings)
+        # Mic is normalized AFTER AEC (cancellation changes levels).
+        _normalize_and_resample(mic_work, mic_out, cfg, declip=cfg.declip)
+        try:
+            mic_work.unlink()
+        except OSError:
+            pass
 
     aec_enabled_effective = bool(aec_info["applied"])
 
-    # ---- Step 3+4: de-clip + normalize + resample each channel ---------------
-    # Mic is normalized AFTER AEC (cancellation changes levels).
-    mic_out = out_dir / "mic.16k.wav"
-    line_out = out_dir / "line.16k.wav"
-    _normalize_and_resample(mic_work, mic_out, cfg, declip=cfg.declip)
+    # ---- Step 3+4: de-clip + normalize + resample the line channel -----------
     _normalize_and_resample(line_in, line_out, cfg, declip=cfg.declip)
 
-    try:
-        mic_work.unlink()
-    except OSError:
-        pass
-
     # ---- Unrecoverable-clipping warnings (raw clipping detected) -------------
-    if mic_before["clipping_detected"]:
+    if has_mic and mic_before["clipping_detected"]:
         warnings.append(
             f"mic clipped at capture (peak {mic_before['peak_dbfs']} dBFS); de-clip is "
             "best-effort — distortion on saturated samples is unrecoverable. Lower mic "
@@ -504,8 +508,13 @@ def preprocess(meeting_id: str, recordings_dir: str | Path,
         )
 
     # ---- after-levels --------------------------------------------------------
-    mic_after = _levels(mic_out, cfg)
     line_after = _levels(line_out, cfg)
+    report_channels: dict = {
+        "line": {"before": line_before, "after": line_after, "aec_applied": False},
+    }
+    if has_mic:
+        report_channels["mic"] = {"before": mic_before, "after": _levels(mic_out, cfg),
+                                  "aec_applied": aec_enabled_effective}
 
     report = {
         "schema_version": SCHEMA_VERSION,
@@ -517,12 +526,7 @@ def preprocess(meeting_id: str, recordings_dir: str | Path,
         "estimated_echo_reduction_db": aec_info["reduction_db"],
         "normalize_target": {"type": "peak", "value_dbfs": cfg.normalize_target_dbfs},
         "resample_rate": cfg.resample_rate,
-        "channels": {
-            "mic": {"before": mic_before, "after": mic_after,
-                    "aec_applied": aec_enabled_effective},
-            "line": {"before": line_before, "after": line_after,
-                     "aec_applied": False},
-        },
+        "channels": report_channels,
         "tool": {
             "aec": (aec_info["backend"] or "none"),
             "resample": f"ffmpeg {_ffmpeg_version(cfg.ffmpeg_path)}",

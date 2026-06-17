@@ -65,13 +65,17 @@ def transcribe_meeting(processed_dir, transcripts_dir, cfg: TranscribeConfig,
         raise FileNotFoundError(f"missing diarization (run diarize before transcribe): {diar_path}")
     turns = json.loads(diar_path.read_text(encoding="utf-8")).get("segments", [])
     line, lrate = vad.read_pcm16_mono(pdir / "line.16k.wav")
-    mic, mrate = vad.read_pcm16_mono(pdir / "mic.16k.wav")
+    # `mic` is optional: single-file/imported meetings (`--from-file`) have no mic channel.
+    mic_path = pdir / "mic.16k.wav"
+    has_mic = mic_path.exists()
+    mic, mrate = vad.read_pcm16_mono(mic_path) if has_mic else ([], lrate)
 
     # One job per utterance: (channel, samples, rate, start, end, idx).
     jobs = [("line", line, lrate, float(t["start"]), float(t["end"]), i)
             for i, t in enumerate(turns)]
-    jobs += [("mic", mic, mrate, a, b, i)
-             for i, (a, b) in enumerate(vad.segment_speech(mic, mrate))]
+    if has_mic:
+        jobs += [("mic", mic, mrate, a, b, i)
+                 for i, (a, b) in enumerate(vad.segment_speech(mic, mrate))]
 
     def _run(job):
         ch, samples, rate, a, b, idx = job
@@ -89,10 +93,13 @@ def transcribe_meeting(processed_dir, transcripts_dir, cfg: TranscribeConfig,
                     on_progress(done, len(jobs))
 
     line_segs = [s for ch, s in results if ch == "line" and s["text"]]
-    mic_segs = [s for ch, s in results if ch == "mic" and s["text"]]
     _write(tdir / "line.whisper.json", lrate, len(line), line_segs)
-    _write(tdir / "mic.whisper.json", mrate, len(mic), mic_segs)
-    return {"mic": tdir / "mic.whisper.json", "line": tdir / "line.whisper.json"}
+    out = {"line": tdir / "line.whisper.json"}
+    if has_mic:
+        mic_segs = [s for ch, s in results if ch == "mic" and s["text"]]
+        _write(tdir / "mic.whisper.json", mrate, len(mic), mic_segs)
+        out["mic"] = tdir / "mic.whisper.json"
+    return out
 
 
 def main(argv: list[str] | None = None) -> int:

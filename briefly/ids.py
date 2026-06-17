@@ -1,14 +1,39 @@
-"""ULID generation — time-ordered, lexicographically sortable meeting ids.
+"""Meeting id generation.
 
-A ULID is 26 Crockford-base32 chars: 48-bit millisecond timestamp + 80-bit randomness.
-Generated once at capture start; the key for every downstream per-meeting directory.
+The default ids are short, human-typable sequential names: ``meeting_0001``, ``meeting_0002``,
+… (prefix configurable via ``MEETING_ID_PREFIX``). `next_meeting_id` scans an existing
+recordings/ dir and returns the next free number, so ids are easy to read and re-type later.
+
+`new_ulid` (26 Crockford-base32 chars: 48-bit ms timestamp + 80-bit randomness) is kept for
+callers that still want an opaque, time-ordered id.
 """
 from __future__ import annotations
 
 import os
+import re
 import time
+from pathlib import Path
+
+DEFAULT_MEETING_ID_PREFIX = "meeting_"
 
 _CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
+
+
+def next_meeting_id(recordings_dir, prefix: str = DEFAULT_MEETING_ID_PREFIX, width: int = 4) -> str:
+    """Return the next sequential id like ``meeting_0001`` for `recordings_dir`.
+
+    Scans for existing ``<prefix><digits>`` directories and returns ``<prefix>`` + (max+1),
+    zero-padded to `width`. Monotonic: deleting a middle id never causes reuse.
+    """
+    d = Path(recordings_dir)
+    pat = re.compile(re.escape(prefix) + r"(\d+)$")
+    highest = 0
+    if d.exists():
+        for child in d.iterdir():
+            m = pat.match(child.name)
+            if m:
+                highest = max(highest, int(m.group(1)))
+    return f"{prefix}{highest + 1:0{width}d}"
 
 
 def _encode(value: int, length: int) -> str:

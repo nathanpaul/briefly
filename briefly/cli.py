@@ -89,10 +89,11 @@ def _capture_main(argv: list[str] | None) -> int:
 
     args = p.parse_args(argv)
     cfg = _config_from(args)
-    if not args.recordings_dir:                      # align with `briefly process` via BRIEFLY_DATA_ROOT
-        from .dotenv import load_dotenv
-        load_dotenv()
-        cfg.recordings_dir = str(Path(os.environ.get("BRIEFLY_DATA_ROOT", ".")) / "recordings")
+    from .dotenv import load_dotenv
+    load_dotenv()
+    cfg.meeting_id_prefix = os.environ.get("MEETING_ID_PREFIX", cfg.meeting_id_prefix)
+    if not args.recordings_dir:                      # align with `briefly process` via DATA_ROOT
+        cfg.recordings_dir = str(Path(os.environ.get("DATA_ROOT", ".")) / "recordings")
     try:
         if args.capcmd == "preflight":
             for role, info in cap.preflight(cfg).items():

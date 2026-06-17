@@ -56,11 +56,15 @@ def transcribe_meeting_asr(processed_dir, transcripts_dir, cfg: AsrConfig, post=
     both the WhisperX and faster-whisper backends (same /asr contract)."""
     pdir, tdir = Path(processed_dir), Path(transcripts_dir)
     tdir.mkdir(parents=True, exist_ok=True)
+    # `line` is required; `mic` is optional (single-file/imported meetings have no mic channel).
+    line_src = pdir / "line.16k.wav"
+    if not line_src.exists():
+        raise FileNotFoundError(f"missing cleaned audio: {line_src}")
     out: dict[str, Path] = {}
     for ch in ("mic", "line"):
         src = pdir / f"{ch}.16k.wav"
         if not src.exists():
-            raise FileNotFoundError(f"missing cleaned audio: {src}")
+            continue
         resp = asr_file(src, cfg, post=post)
         p = tdir / f"{ch}.whisper.json"
         p.write_text(json.dumps(to_whisper_doc(resp), indent=2), encoding="utf-8")

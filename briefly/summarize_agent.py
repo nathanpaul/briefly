@@ -1,9 +1,11 @@
-"""`briefly summarize ["<instruction>"] [--meeting-id <id>]` — the final step: write one meeting
-into the Obsidian vault with headless Claude Code.
+"""`briefly summarize ["<instruction>"] [--enrich ["<prompt>"]] [--meeting-id <id>]` — the final
+step: write a meeting into the Obsidian vault with headless Claude Code.
 
-Pass a custom instruction ("extract action items into 30-Tasks", "exec summary + link each
-person to their MOC", ...) or omit it to use DEFAULT_SUMMARIZE_PROMPT from .env (the built-in
-DEFAULT_PROMPT otherwise). meeting_id defaults to the last captured meeting, or pass --meeting-id.
+Default: write ONE concise summary page at the vault root. Pass a custom instruction, or omit it
+to use DEFAULT_SUMMARIZE_PROMPT from .env (the built-in DEFAULT_PROMPT otherwise).
+With --enrich, instead create/update notes ACROSS the vault: the ENRICHMENT_PROMPT from .env
+(or the prompt passed to --enrich) is appended to the instruction to direct which files/folders
+to edit. meeting_id defaults to the last captured meeting, or pass --meeting-id.
 
 Safety: the vault is added via --add-dir, tools limited to Read,Glob,Grep,Edit,Write (NO Bash, so
 the 40-Personal OS guard can't be bypassed), permission-mode acceptEdits, cwd = the vault root.
@@ -89,29 +91,45 @@ def _read_transcript(cfg: SummarizeAgentConfig, mid: str) -> str:
 
 
 def note_rel_path(cfg: SummarizeAgentConfig, mid: str, date: str) -> str:
-    """Vault-relative meeting-note path: <meetings_subdir>/<date>-<id>.md."""
-    return f"{cfg.meetings_subdir}/{date}-{mid}.md"
+    """Default single-summary path: <date>-<id>.md at the VAULT ROOT."""
+    return f"{date}-{mid}.md"
 
 
 def build_prompt(user_instruction: str, mid: str, date: str, attendees: list[str],
-                 note_rel: str, transcript_text: str) -> str:
-    """Compose the Claude Code prompt: meeting context + the user's instruction + transcript."""
+                 note_rel: str, transcript_text: str, enrich: bool = False) -> str:
+    """Compose the Claude Code prompt: meeting context + the instruction + transcript.
+
+    Default (enrich=False): write ONE concise summary page at the vault root (note_rel).
+    enrich=True: follow the instruction to create/update notes across the vault.
+    """
     who = ", ".join(attendees) if attendees else "(unknown)"
-    return (
-        "You are enriching an Obsidian vault after a meeting. Your working directory IS the vault "
-        "root. Use only Read/Glob/Grep/Edit/Write — do NOT run shell commands.\n\n"
+    header = (
+        "You are writing meeting notes into an Obsidian vault. Your working directory IS the "
+        "vault root. Use only Read/Glob/Grep/Edit/Write — do NOT run shell commands.\n\n"
         f"Meeting id: {mid}\n"
         f"Date: {date}\n"
-        f"Attendees: {who}\n"
-        f"Target meeting note (create if missing, else update in place): {note_rel}\n\n"
-        "Follow THIS instruction for how to summarize / enrich this meeting into the vault "
-        "(it is specific to this meeting):\n"
-        "--- INSTRUCTION ---\n"
-        f"{user_instruction}\n"
-        "--- END INSTRUCTION ---\n\n"
-        "Make the requested edits to the meeting note and any related vault notes the instruction "
-        "calls for, following the vault's existing conventions/templates. Preserve any existing "
-        "content you are not asked to change.\n\n"
+        f"Attendees: {who}\n\n"
+    )
+    if enrich:
+        body = (
+            "Enrich the vault from this meeting. Follow THIS instruction for exactly which notes "
+            "and folders to create or update (it describes where things go in this vault):\n"
+            "--- INSTRUCTION ---\n"
+            f"{user_instruction}\n"
+            "--- END INSTRUCTION ---\n\n"
+            "Make the requested edits across the vault, following its existing "
+            "conventions/templates. Preserve any existing content you are not asked to change.\n\n"
+        )
+    else:
+        body = (
+            f"Write ONE concise meeting note at the vault root: {note_rel} (create if missing, "
+            "else overwrite). Do not create or edit any other files. Follow this instruction:\n"
+            "--- INSTRUCTION ---\n"
+            f"{user_instruction}\n"
+            "--- END INSTRUCTION ---\n\n"
+        )
+    return (
+        header + body +
         "Speaker-attributed transcript of the meeting:\n"
         "--- TRANSCRIPT ---\n"
         f"{transcript_text}\n"
@@ -139,21 +157,24 @@ def _default_runner(cmd: list[str], cwd: str, timeout: float) -> subprocess.Comp
 
 
 def summarize_agent(user_instruction: str, cfg: SummarizeAgentConfig, meeting_id: str | None = None,
-                    runner=None, dry_run: bool = False) -> dict:
-    """Resolve the meeting, compose the prompt, and run headless Claude Code to enrich the vault.
+                    runner=None, dry_run: bool = False, enrich: bool = False) -> dict:
+    """Resolve the meeting, compose the prompt, and run headless Claude Code on the vault.
+
+    enrich=False (default): write one concise summary page at the vault root.
+    enrich=True: follow the instruction to create/update notes across the vault.
 
     Returns the parsed Claude Code JSON result (with total_cost_usd etc.), or, for dry_run, a dict
     describing the resolved command without invoking Claude. Raises SummarizeAgentError on failure.
     """
     if not (user_instruction or "").strip():
         raise SummarizeAgentError("empty prompt — pass an instruction, e.g. "
-                                  "briefly summarize \"extract action items into 30-Tasks\"")
+                                  "briefly summarize \"3-bullet summary + action items\"")
     runner = runner or _default_runner
     mid = resolve_meeting_id(cfg, meeting_id)
     date, attendees = _read_meeting_meta(cfg, mid)
     transcript_text = _read_transcript(cfg, mid)
     note_rel = note_rel_path(cfg, mid, date)
-    prompt = build_prompt(user_instruction, mid, date, attendees, note_rel, transcript_text)
+    prompt = build_prompt(user_instruction, mid, date, attendees, note_rel, transcript_text, enrich)
     cmd = build_command(prompt, cfg)
 
     if dry_run:
@@ -163,7 +184,7 @@ def summarize_agent(user_instruction: str, cfg: SummarizeAgentConfig, meeting_id
                 "command": [a if a != prompt else f"<prompt:{len(prompt)} chars>" for a in cmd]}
 
     if not Path(cfg.vault_dir).exists():
-        raise SummarizeAgentError(f"vault not found: {cfg.vault_dir} (set --vault-dir or BRIEFLY_VAULT_DIR)")
+        raise SummarizeAgentError(f"vault not found: {cfg.vault_dir} (set --vault-dir or VAULT_DIR)")
     try:
         proc = runner(cmd, str(cfg.vault_dir), cfg.timeout_sec)
     except FileNotFoundError as e:
@@ -182,22 +203,33 @@ def summarize_agent(user_instruction: str, cfg: SummarizeAgentConfig, meeting_id
 
 # ----------------------------------------------------------------------------- CLI
 
+# --enrich was given with no value → fall back to ENRICHMENT_PROMPT from .env.
+_ENRICH_FROM_ENV = "\0use-env-enrichment\0"
+
 
 def _build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="briefly summarize",
         description=(
-            "Write one meeting into the Obsidian vault with Claude Code. Pass a custom instruction, "
-            "or omit it to use DEFAULT_SUMMARIZE_PROMPT. meeting-id defaults to the last captured "
-            "meeting. PRIVACY: transcript text goes to Claude; raw audio never leaves the device."),
-        epilog='example: briefly summarize "Pull decisions + action items into the project note, '
-               'and link each attendee to their person note"',
+            "Summarize one meeting into your Obsidian vault with Claude Code. By default writes a "
+            "single concise page at the vault root. Pass a custom instruction, or omit it to use "
+            "DEFAULT_SUMMARIZE_PROMPT. Use --enrich to instead create/update notes across the vault "
+            "per ENRICHMENT_PROMPT. meeting-id defaults to the last captured meeting. "
+            "PRIVACY: transcript text goes to Claude; raw audio never leaves the device."),
+        epilog='examples:\n'
+               '  briefly summarize                       # one summary page at the vault root\n'
+               '  briefly summarize --enrich              # enrich the vault using ENRICHMENT_PROMPT\n'
+               '  briefly summarize --enrich "update the project plan"   # override the .env prompt',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("prompt", nargs="?", default=None,
-                   help="how to summarize/enrich this meeting; omit to use DEFAULT_SUMMARIZE_PROMPT")
-    p.add_argument("--meeting-id", default=None, help="meeting ULID (default: last captured meeting)")
-    p.add_argument("--vault-dir", default=None, help="vault root (default: $BRIEFLY_VAULT_DIR or ./vault)")
-    p.add_argument("--data-root", default=None, help="holds recordings/ + transcripts/ (default: $BRIEFLY_DATA_ROOT or .)")
+                   help="how to summarize this meeting; omit to use DEFAULT_SUMMARIZE_PROMPT")
+    p.add_argument("--enrich", nargs="?", const=_ENRICH_FROM_ENV, default=None, metavar="PROMPT",
+                   help="enrich the vault (create/update notes); appends ENRICHMENT_PROMPT from .env, "
+                        "or the PROMPT you pass here, to the summarize instruction")
+    p.add_argument("--meeting-id", default=None, help="meeting id (default: last captured meeting)")
+    p.add_argument("--vault-dir", default=None, help="vault root (default: $VAULT_DIR or ./vault)")
+    p.add_argument("--data-root", default=None, help="holds recordings/ + transcripts/ (default: $DATA_ROOT or .)")
     p.add_argument("--transcripts-dir", default=None)
     p.add_argument("--recordings-dir", default=None)
     p.add_argument("--model", default=None, help="Claude model id (optional)")
@@ -210,24 +242,38 @@ def _build_parser() -> argparse.ArgumentParser:
 def _config_from(args: argparse.Namespace) -> SummarizeAgentConfig:
     from .dotenv import load_dotenv
 
-    load_dotenv()  # BRIEFLY_VAULT_DIR / BRIEFLY_DATA_ROOT (does not override real env vars)
+    load_dotenv()  # VAULT_DIR / DATA_ROOT (does not override real env vars)
     cfg = SummarizeAgentConfig(
-        vault_dir=args.vault_dir or os.environ.get("BRIEFLY_VAULT_DIR", "vault"),
-        data_root=args.data_root or os.environ.get("BRIEFLY_DATA_ROOT", "."),
+        vault_dir=args.vault_dir or os.environ.get("VAULT_DIR", "vault"),
+        data_root=args.data_root or os.environ.get("DATA_ROOT", "."),
         transcripts_dir=args.transcripts_dir,
         recordings_dir=args.recordings_dir,
-        claude_path=args.claude_path or os.environ.get("BRIEFLY_CLAUDE_PATH", "claude"),
-        model=args.model or os.environ.get("BRIEFLY_SUMMARIZE_MODEL") or None,
+        claude_path=args.claude_path or os.environ.get("CLAUDE_PATH", "claude"),
+        model=args.model or os.environ.get("SUMMARIZE_MODEL") or None,
     )
     return cfg
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
-    cfg = _config_from(args)   # loads .env (DEFAULT_SUMMARIZE_PROMPT, BRIEFLY_*)
-    prompt = args.prompt or os.environ.get("DEFAULT_SUMMARIZE_PROMPT") or DEFAULT_PROMPT
+    cfg = _config_from(args)   # loads .env (DEFAULT_SUMMARIZE_PROMPT, ENRICHMENT_PROMPT, *)
+    base = args.prompt or os.environ.get("DEFAULT_SUMMARIZE_PROMPT") or DEFAULT_PROMPT
+
+    enrich = args.enrich is not None
+    instruction = base
+    if enrich:
+        enrichment = (os.environ.get("ENRICHMENT_PROMPT") if args.enrich is _ENRICH_FROM_ENV
+                      else args.enrich)
+        if not (enrichment or "").strip():
+            print("error: --enrich given but no enrichment prompt — set ENRICHMENT_PROMPT in .env "
+                  'or pass one, e.g. briefly summarize --enrich "put blockers in 30-Issues/"',
+                  file=sys.stderr)
+            return 2
+        instruction = f"{base}\n\n{enrichment}"   # enrichment prompt appended to the end
+
     try:
-        result = summarize_agent(prompt, cfg, meeting_id=args.meeting_id, dry_run=args.dry_run)
+        result = summarize_agent(instruction, cfg, meeting_id=args.meeting_id,
+                                 dry_run=args.dry_run, enrich=enrich)
     except SummarizeAgentError as e:
         print(f"error: {e}", file=sys.stderr)
         return e.exit_code
@@ -235,7 +281,8 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(result, indent=2))
         return 0
     cost = result.get("total_cost_usd")
-    print(f"enriched {result.get('note')} for meeting {result.get('meeting_id')}"
+    verb = "enriched the vault from" if enrich else f"wrote {result.get('note')} for"
+    print(f"{verb} meeting {result.get('meeting_id')}"
           + (f"  (cost ${cost})" if cost is not None else ""))
     return 0
 

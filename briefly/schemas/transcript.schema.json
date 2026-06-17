@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {"const": "1.0"},
-    "meeting_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "meeting_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
     "date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
     "generated_at": {"type": ["string", "null"]},
     "partial": {"type": "boolean"},

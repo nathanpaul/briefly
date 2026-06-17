@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from ..config import CaptureConfig
-from ..ids import new_ulid
+from ..ids import next_meeting_id
 from ..models import CaptureInfo, ChannelInfo, MeetingManifest
 from ..state import write_last_meeting
 from . import devices as dev
@@ -149,12 +149,16 @@ def _require_dual(cfg: CaptureConfig) -> None:
 
 
 def _new_session_dir(cfg: CaptureConfig) -> tuple[str, Path]:
-    mid = new_ulid()
-    mdir = Path(cfg.recordings_dir) / mid
-    if mdir.exists():
-        raise AlreadyExistsError(f"recordings dir already exists: {mdir}")
-    mdir.mkdir(parents=True)
-    return mid, mdir
+    base = Path(cfg.recordings_dir)
+    for _ in range(10000):
+        mid = next_meeting_id(base, cfg.meeting_id_prefix)
+        mdir = base / mid
+        try:
+            mdir.mkdir(parents=True, exist_ok=False)
+            return mid, mdir
+        except FileExistsError:
+            continue   # lost a race to a concurrent capture; take the next number
+    raise AlreadyExistsError(f"could not allocate a free meeting id under {base}")
 
 
 def _finalize(cfg: CaptureConfig, mid: str, mdir: Path, started: str,

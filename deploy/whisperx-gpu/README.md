@@ -90,11 +90,11 @@ curl -F audio=@meeting.wav http://localhost:8000/diarize | jq .   # who-spoke-wh
 - On the **capture laptop**, in Briefly's `.env`, point the **transcribe** and **diarize**
   steps at this box — they are separate URLs because they are separate steps:
   ```
-  BRIEFLY_WHISPERX_URL=http://<gpu-machine-ip>:8000/asr        # transcribe + align
-  BRIEFLY_DIARIZE_URL=http://<gpu-machine-ip>:8000/diarize     # diarization
+  TRANSCRIBE_SERVICE_URL=http://<gpu-machine-ip>:8000/asr        # transcribe + align
+  DIARIZE_URL=http://<gpu-machine-ip>:8000/diarize     # diarization
   ```
   `/diarize` here is **interchangeable** with the homelab pyannote `speaker-diarization`
-  service — point `BRIEFLY_DIARIZE_URL` at whichever box you prefer; the response is identical.
+  service — point `DIARIZE_URL` at whichever box you prefer; the response is identical.
   That's the entire integration — no port-forward, no gateway.
 
 ## Notes

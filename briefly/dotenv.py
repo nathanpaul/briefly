@@ -2,7 +2,7 @@
 
 Parses `KEY=VALUE` lines (`#` comments, blank lines, and optional surrounding quotes or a
 leading `export ` are ignored) and sets them in os.environ. By default it does NOT override
-variables already present in the real environment, so an explicit `BRIEFLY_*` env var or
+variables already present in the real environment, so an explicit env var or a
 CLI flag still wins. `briefly process` / `briefly watch` load `.env` from the working directory
 automatically (see orchestrator.load_config).
 """

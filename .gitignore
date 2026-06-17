@@ -15,7 +15,7 @@ processed/
 transcripts/
 
 # Local-only project content (kept on disk, not published).
-# CLAUDE.md/PLAN.md are anchored to the repo root so vault-template/.claude/CLAUDE.md still ships.
+# CLAUDE.md/PLAN.md are anchored to the repo root so any nested CLAUDE.md elsewhere still ships.
 docs/
 knowledge/
 scripts/

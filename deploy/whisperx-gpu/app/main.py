@@ -15,9 +15,9 @@ independently, so Briefly drives them as separate, independently re-runnable ste
 
 The two endpoints match what Briefly's clients expect:
   * /asr      == briefly/clients/asr.py        (same /asr contract as the cluster
-                 faster-whisper service — point BRIEFLY_WHISPERX_URL at …/asr)
+                 faster-whisper service — point TRANSCRIBE_SERVICE_URL at …/asr)
   * /diarize  == briefly/clients/diarize.py     (byte-for-byte the SAME response shape as the
-                 homelab pyannote `speaker-diarization` service — point BRIEFLY_DIARIZE_URL at
+                 homelab pyannote `speaker-diarization` service — point DIARIZE_URL at
                  …/diarize; the two diarizers are interchangeable drop-ins)
 
 Design notes:

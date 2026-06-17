@@ -138,17 +138,17 @@ def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "prepro
 # --- config loading + CLI -------------------------------------------------------------
 
 _ENV = {
-    "data_root": "BRIEFLY_DATA_ROOT", "vault_dir": "BRIEFLY_VAULT_DIR",
-    "whisper_host": "BRIEFLY_WHISPER_HOST", "whisper_port": "BRIEFLY_WHISPER_PORT",
-    "diarize_url": "BRIEFLY_DIARIZE_URL", "diarize_mode": "BRIEFLY_DIARIZE_MODE",
-    "asr_backend": "BRIEFLY_ASR_BACKEND", "whisperx_url": "BRIEFLY_WHISPERX_URL",
-    "faster_whisper_url": "BRIEFLY_FASTER_WHISPER_URL",
+    "data_root": "DATA_ROOT", "vault_dir": "VAULT_DIR",
+    "whisper_host": "WHISPER_HOST", "whisper_port": "WHISPER_PORT",
+    "diarize_url": "DIARIZE_URL", "diarize_mode": "DIARIZE_MODE",
+    "asr_backend": "ASR_BACKEND", "whisperx_url": "TRANSCRIBE_SERVICE_URL",
+    "faster_whisper_url": "FASTER_WHISPER_URL",
 }
 
 
 def load_config(path: str | None, overrides: dict) -> PipelineConfig:
     from .dotenv import load_dotenv
-    load_dotenv()  # populate BRIEFLY_* from ./.env (real env vars / CLI flags still win)
+    load_dotenv()  # populate * from ./.env (real env vars / CLI flags still win)
     data: dict = {}
     if path:
         data.update(json.loads(Path(path).read_text(encoding="utf-8")))
@@ -162,10 +162,58 @@ def load_config(path: str | None, overrides: dict) -> PipelineConfig:
     return PipelineConfig(**{k: v for k, v in data.items() if k in known})
 
 
+def ingest_file(cfg: PipelineConfig, file_path: str | Path,
+                attendees: list[str] | None = None,
+                meeting_id_prefix: str = "meeting_") -> str:
+    """Import a single audio file as a new line-only meeting; return its meeting_id.
+
+    Transcodes any input (wav/mp3/m4a/flac/…) to recordings/<id>/line.wav (mono PCM) and writes
+    a meeting.json with only a 'line' channel — no mic/"Me". The normal pipeline then runs
+    (preprocess → diarize → transcribe → merge); diarization separates speakers in the file.
+    """
+    import subprocess
+    from datetime import datetime, timezone
+
+    from .audio import devices as dev
+    from .audio.capture import _ffmpeg_version
+    from .ids import next_meeting_id
+    from .models import CaptureInfo, ChannelInfo, MeetingManifest
+    from .state import write_last_meeting
+
+    src = Path(file_path)
+    if not src.exists():
+        raise FileNotFoundError(f"--from-file not found: {src}")
+    rec_root = Path(cfg.data_root) / "recordings"
+    mid = next_meeting_id(rec_root, meeting_id_prefix)
+    mdir = rec_root / mid
+    mdir.mkdir(parents=True, exist_ok=False)
+    line_wav = mdir / "line.wav"
+    proc = subprocess.run(
+        [cfg.ffmpeg_path, "-y", "-i", str(src), "-ac", "1", "-c:a", "pcm_s16le", str(line_wav)],
+        capture_output=True, text=True)
+    if proc.returncode != 0 or not line_wav.exists():
+        raise RuntimeError(f"ffmpeg could not import {src}: {(proc.stderr or '')[-300:]}")
+    rate, ch, dur = dev.wav_info(line_wav)
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    MeetingManifest(
+        meeting_id=mid, date=now[:10], started_at=now, ended_at=now, partial=False,
+        attendees=list(attendees or []),
+        capture=CaptureInfo(mode="import", sample_rate=rate or 0, format="pcm_s16le",
+                            channels=ch or 1, ffmpeg=_ffmpeg_version(cfg.ffmpeg_path),
+                            offset_method="none"),
+        channels={"line": ChannelInfo(file="line.wav", device_name="import",
+                                      start_offset_sec=0.0, duration_sec=dur)},
+    ).write(mdir / "meeting.json")
+    write_last_meeting(rec_root, mid)
+    return mid
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="briefly process",
                                 description="run the data pipeline (preprocess→diarize→transcribe→merge) for one meeting")
     p.add_argument("--meeting-id", help="defaults to the last captured meeting (recordings/.last-meeting-id)")
+    p.add_argument("--from-file", dest="from_file", metavar="AUDIO",
+                   help="import an audio file as a new meeting and process it (no soundcard capture needed)")
     p.add_argument("--from", dest="from_stage", default="preprocess", choices=STAGES)
     p.add_argument("--to", dest="to_stage", default="merge", choices=STAGES)
     p.add_argument("--force", action="store_true", help="re-run stages even if output exists")
@@ -189,14 +237,27 @@ def main(argv: list[str] | None = None) -> int:
         "asr_backend": args.asr_backend, "whisperx_url": args.whisperx_url,
         "faster_whisper_url": args.faster_whisper_url,
     })
-    from .state import read_last_meeting
-    mid = args.meeting_id or read_last_meeting(Path(cfg.data_root) / "recordings")
-    if not mid:
-        print("error: no --meeting-id given and no last captured meeting found "
-              "(run `briefly capture` first, or pass --meeting-id)", file=sys.stderr)
-        return 2
-    if not args.meeting_id:
-        print(f"(using last captured meeting: {mid})")
+    if args.from_file:
+        if args.meeting_id:
+            print("error: pass either --from-file or --meeting-id, not both", file=sys.stderr)
+            return 2
+        try:
+            mid = ingest_file(cfg, args.from_file,
+                              meeting_id_prefix=os.environ.get("MEETING_ID_PREFIX", "meeting_"))
+        except (FileNotFoundError, RuntimeError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        print(f"(imported {args.from_file} as meeting: {mid})")
+    else:
+        from .state import read_last_meeting
+        mid = args.meeting_id or read_last_meeting(Path(cfg.data_root) / "recordings")
+        if not mid:
+            print("error: no --meeting-id given and no last captured meeting found "
+                  "(run `briefly capture`, pass --from-file <audio>, or pass --meeting-id)",
+                  file=sys.stderr)
+            return 2
+        if not args.meeting_id:
+            print(f"(using last captured meeting: {mid})")
     from .progress import ProgressReporter
     reporter = ProgressReporter(cfg.data_root, mid, STAGES, log=print)
     try:

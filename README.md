@@ -24,9 +24,10 @@ flowchart LR
 
 `briefly process` runs **preprocess → diarize → transcribe → merge** (each stage is skipped if its
 output already exists), then `briefly summarize` writes the meeting into your vault. Diarize and
-transcribe are separate steps served by a selectable backend (`BRIEFLY_ASR_BACKEND`, default
+transcribe are separate steps served by a selectable backend (`ASR_BACKEND`, default
 **`whisperx`** — one GPU box that serves both `/asr` and `/diarize`). Outputs live in per-meeting
-directories keyed by a ULID `meeting_id`.
+directories keyed by a short, sequential `meeting_id` — `meeting_0001`, `meeting_0002`, … (prefix
+configurable via `MEETING_ID_PREFIX`).
 
 ## Quick start
 
@@ -49,12 +50,20 @@ briefly capture start --attendees "Jane Doe,John Smith"   # records detached; pr
 #   … the meeting happens …
 briefly capture stop
 briefly process                                            # preprocess → diarize → transcribe → merge
-briefly summarize                                          # write the note into your Obsidian vault
-#   …or steer it for this meeting:
-#   briefly summarize "3-bullet summary + action items with owners; link each person to their MOC"
+briefly summarize                                          # write one summary page to your vault root
+#   …or steer the summary for this meeting:
+#   briefly summarize "3-bullet summary + action items with owners"
+#   …or enrich the vault (create/update notes per ENRICHMENT_PROMPT in .env):
+#   briefly summarize --enrich
+#   briefly summarize --enrich "put blockers in 30-Issues/, next steps in 40-NextSteps/"
 ```
 
-`process` and `summarize` both default to the **last captured meeting** (or pass `--meeting-id <id>`).
+**Already have a recording?** Skip capture and feed any audio file straight in:
+```sh
+briefly process --from-file ./standup.m4a                  # imports it as a new meeting, then processes
+```
+
+`process` and `summarize` both default to the **last captured (or imported) meeting** (or pass `--meeting-id <id>`).
 
 ### Hugging Face access (one-time)
 The diarization model is gated. Create a **read token** at <https://hf.co/settings/tokens>, accept the
@@ -72,10 +81,10 @@ briefly watch     # runs `process` on each newly captured meeting; summarize whe
 | | |
 |---|---|
 | **Capture** | macOS + a 2-input USB soundcard (mic-in + line-in); `ffmpeg`. |
-| **GPU service** | A machine with an NVIDIA GPU + Docker for `deploy/whisperx-gpu/` — or point the `BRIEFLY_*_URL`s at any compatible `/asr` + `/diarize` endpoints. |
+| **GPU service** | A machine with an NVIDIA GPU + Docker for `deploy/whisperx-gpu/` — or point the `*_URL`s at any compatible `/asr` + `/diarize` endpoints. |
 | **Runtime** | Python 3.11+. Core is stdlib-only; `pip install -e '.[aec,whisper]'` adds `numpy` (real AEC) and `wyoming` (legacy STT client). |
 | **Claude** | The `claude` CLI (your Claude Code auth) — `summarize` uses it by default, **no API key needed**. |
-| **Vault** | An Obsidian vault; copy [vault-template/](vault-template/) to start. |
+| **Vault** | Any Obsidian vault — point `VAULT_DIR` at it. `summarize` writes a page at its root; `--enrich` updates notes across it per `ENRICHMENT_PROMPT`. |
 
 ## Configuration
 
@@ -84,11 +93,13 @@ Real env vars and CLI flags override it.
 
 | Key | Purpose |
 |---|---|
-| `BRIEFLY_ASR_BACKEND` | `whisperx` (default) · `faster-whisper` · `wyoming` |
-| `BRIEFLY_WHISPERX_URL` / `BRIEFLY_DIARIZE_URL` | the GPU service's `/asr` + `/diarize` endpoints |
-| `BRIEFLY_VAULT_DIR` / `BRIEFLY_DATA_ROOT` | Obsidian vault + where `recordings/…` live |
+| `ASR_BACKEND` | `whisperx` (default) · `faster-whisper` · `wyoming` |
+| `TRANSCRIBE_SERVICE_URL` / `DIARIZE_URL` | the GPU service's `/asr` + `/diarize` endpoints |
+| `VAULT_DIR` / `DATA_ROOT` | Obsidian vault + where `recordings/…` live |
+| `MEETING_ID_PREFIX` | prefix for sequential ids (default `meeting_` → `meeting_0001`) |
 | `DEFAULT_SUMMARIZE_PROMPT` | what `briefly summarize` does when you give it no prompt |
-| `BRIEFLY_SUMMARIZE_MODEL` | Claude model for `summarize` (default `claude-opus-4-8`) |
+| `ENRICHMENT_PROMPT` | appended to the instruction when you pass `--enrich` (which notes/folders to edit) |
+| `SUMMARIZE_MODEL` | Claude model for `summarize` (default `claude-opus-4-8`) |
 
 Every stage is also its own command — `briefly {capture,preprocess,diarize,transcribe,merge}` — add
 `--help` to any of them.

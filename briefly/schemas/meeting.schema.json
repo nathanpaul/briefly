@@ -7,7 +7,7 @@
   "additionalProperties": false,
   "properties": {
     "schema_version": {"const": "1.0"},
-    "meeting_id": {"type": "string", "pattern": "^[0-9A-HJKMNP-TV-Z]{26}$"},
+    "meeting_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
     "date": {"type": "string", "pattern": "^\\d{4}-\\d{2}-\\d{2}$"},
     "started_at": {"type": "string"},
     "ended_at": {"type": ["string", "null"]},
@@ -17,7 +17,7 @@
       "type": "object",
       "required": ["mode", "sample_rate", "format", "channels", "ffmpeg", "offset_method"],
       "properties": {
-        "mode": {"enum": ["dual-process", "aggregate"]},
+        "mode": {"enum": ["dual-process", "aggregate", "import"]},
         "sample_rate": {"type": "integer"},
         "format": {"type": "string"},
         "channels": {"type": "integer"},
@@ -27,7 +27,7 @@
     },
     "channels": {
       "type": "object",
-      "required": ["mic", "line"],
+      "required": ["line"],
       "properties": {
         "mic": {"$ref": "#/$defs/channel"},
         "line": {"$ref": "#/$defs/channel"}

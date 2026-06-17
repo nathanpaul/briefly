@@ -57,11 +57,23 @@ class TestSummarizeAgent(unittest.TestCase):
 
     def test_prompt_contains_instruction_and_transcript(self):
         prompt = build_prompt("EXTRACT ACTIONS", MID, "2026-06-15", ["Paul"],
-                              "20-Meetings/2026-06-15-x.md", "Me: hi\nSpeaker_1: yo")
+                              "2026-06-15-x.md", "Me: hi\nSpeaker_1: yo")
         self.assertIn("EXTRACT ACTIONS", prompt)
         self.assertIn("Speaker_1: yo", prompt)
         self.assertIn("2026-06-15", prompt)
         self.assertIn("do NOT run shell", prompt)
+
+    def test_default_prompt_targets_vault_root_single_page(self):
+        prompt = build_prompt("SUMMARIZE", MID, "2026-06-15", [], "2026-06-15-x.md", "T", enrich=False)
+        self.assertIn("vault root", prompt)
+        self.assertIn("2026-06-15-x.md", prompt)
+        self.assertIn("do not create or edit any other files", prompt.lower())
+
+    def test_enrich_prompt_frames_as_cross_vault(self):
+        prompt = build_prompt("BASE\n\nPUT BLOCKERS IN 30-Issues/", MID, "2026-06-15", [],
+                              "2026-06-15-x.md", "T", enrich=True)
+        self.assertIn("PUT BLOCKERS IN 30-Issues/", prompt)       # enrichment text present
+        self.assertIn("across the vault", prompt)                 # framed as multi-note enrichment
 
     def test_dry_run_composes_command_no_invoke(self):
         called = []
@@ -69,7 +81,7 @@ class TestSummarizeAgent(unittest.TestCase):
                               runner=lambda *a: called.append(a), dry_run=True)
         self.assertEqual(called, [])                     # claude NOT invoked
         self.assertEqual(res["meeting_id"], MID)
-        self.assertEqual(res["note"], f"20-Meetings/2026-06-15-{MID}.md")
+        self.assertEqual(res["note"], f"2026-06-15-{MID}.md")    # single page at the vault root
         cmd = res["command"]
         self.assertIn("--add-dir", cmd)
         self.assertIn(str(self.vault), cmd)
