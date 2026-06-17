@@ -321,6 +321,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="diarize+transcribe engine (default whisperx)")
     p.add_argument("--whisperx-url")
     p.add_argument("--faster-whisper-url")
+    p.add_argument("--notify", nargs="?", const="bell", default=None, metavar="MODE",
+                   help="ping when done: --notify (bell) or --notify desktop; default off / $NOTIFY")
     args = p.parse_args(argv)
     cfg = load_config(args.config, {
         "data_root": args.data_root, "vault_dir": args.vault_dir,
@@ -352,6 +354,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"(using last captured meeting: {mid})")
     if cfg.num_speakers is not None:
         print(f"(diarizing for exactly {cfg.num_speakers} total speaker(s))")
+    from .notify import notify, resolve_mode
+    notify_mode = resolve_mode(args.notify)
     from .progress import ProgressReporter
     reporter = ProgressReporter(cfg.data_root, mid, STAGES, log=print)
     t0 = time.monotonic()
@@ -359,6 +363,7 @@ def main(argv: list[str] | None = None) -> int:
         results = run_pipeline(cfg, mid, args.from_stage, args.to_stage, args.force, progress=reporter)
     except Exception:   # run_pipeline already logged an actionable ✗ line for the failing stage
         print(f"error: process did not complete for {mid}", file=sys.stderr)
+        notify("Briefly — process failed", mid, mode=notify_mode)
         return 1
     elapsed = time.monotonic() - t0
     ran = [s for s, st in results if st == "ok"]
@@ -370,6 +375,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"next: briefly summarize        # write this meeting into the vault")
         print(f"      (name speakers in {cfg.tx(mid) / 'speakers.json'}; wrong speaker count? re-run\n"
               f"       briefly process --from diarize --to merge --force --num-speakers N)")
+    notify("Briefly — process done", f"{mid}: {summary}", mode=notify_mode)
     return 0
 
 

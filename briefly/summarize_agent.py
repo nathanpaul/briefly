@@ -293,6 +293,8 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--claude-path", default=None)
     p.add_argument("--dry-run", action="store_true",
                    help="resolve the meeting + print the Claude command without invoking it")
+    p.add_argument("--notify", nargs="?", const="bell", default=None, metavar="MODE",
+                   help="ping when done: --notify (bell) or --notify desktop; default off / $NOTIFY")
     return p
 
 
@@ -314,6 +316,8 @@ def _config_from(args: argparse.Namespace) -> SummarizeAgentConfig:
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     cfg = _config_from(args)   # loads .env (DEFAULT_SUMMARIZE_PROMPT, ENRICHMENT_PROMPT, *)
+    from .notify import notify, resolve_mode
+    notify_mode = resolve_mode(args.notify)
     base = args.prompt or os.environ.get("DEFAULT_SUMMARIZE_PROMPT") or DEFAULT_PROMPT
 
     enrich = args.enrich is not None
@@ -333,6 +337,7 @@ def main(argv: list[str] | None = None) -> int:
                                  dry_run=args.dry_run, enrich=enrich)
     except SummarizeAgentError as e:
         print(f"error: {e}", file=sys.stderr)
+        notify("Briefly — summarize failed", str(e)[:120], mode=notify_mode)
         return e.exit_code
     if args.dry_run:
         print(json.dumps(result, indent=2))
@@ -341,12 +346,14 @@ def main(argv: list[str] | None = None) -> int:
     summary = str(result.get("result") or "").strip()
     if result.get("is_error"):
         print(f"error: Claude reported a problem: {summary[:400] or '(no detail)'}", file=sys.stderr)
+        notify("Briefly — summarize failed", summary[:120], mode=notify_mode)
         return 1
     verb = "enriched the vault from" if enrich else f"wrote {result.get('note')} for"
     print(f"{verb} meeting {result.get('meeting_id')}"
           + (f"  (cost ${cost})" if cost is not None else ""))
     if summary:                                   # show what Claude says it did (catches "write blocked" etc.)
         print(f"  claude: {summary[:500]}")
+    notify("Briefly — summarize done", f"meeting {result.get('meeting_id')}", mode=notify_mode)
     return 0
 
 
