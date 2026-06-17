@@ -22,6 +22,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -141,12 +142,14 @@ def build_prompt(user_instruction: str, mid: str, date: str, attendees: list[str
 
 
 def build_command(prompt: str, cfg: SummarizeAgentConfig) -> list[str]:
+    # stream-json (+ --verbose, which it requires under -p) lets us show Claude's edits live;
+    # the runner still hands back the final result object, so callers parse it as before.
     cmd = [
         cfg.claude_path, "-p", prompt,
         "--add-dir", str(cfg.vault_dir),
         "--allowedTools", cfg.allowed_tools,
         "--permission-mode", cfg.permission_mode,
-        "--output-format", "json",
+        "--output-format", "stream-json", "--verbose",
     ]
     if cfg.model:
         cmd += ["--model", cfg.model]
@@ -155,8 +158,57 @@ def build_command(prompt: str, cfg: SummarizeAgentConfig) -> list[str]:
     return cmd
 
 
-def _default_runner(cmd: list[str], cwd: str, timeout: float) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, timeout=timeout)
+def _event_activity_line(ev: dict, cwd: str) -> str | None:
+    """One '→ what Claude is doing now' line from a stream-json event (its tool uses), or None."""
+    if not isinstance(ev, dict) or ev.get("type") != "assistant":
+        return None
+    parts: list[str] = []
+    for b in ev.get("message", {}).get("content", []):
+        if isinstance(b, dict) and b.get("type") == "tool_use":
+            inp = b.get("input") if isinstance(b.get("input"), dict) else {}
+            target = (inp.get("file_path") or inp.get("path") or inp.get("pattern")
+                      or inp.get("command") or "")
+            if target and cwd:
+                try:
+                    rel = os.path.relpath(str(target), cwd)
+                    target = os.path.basename(str(target)) if rel.startswith("..") else rel
+                except ValueError:
+                    target = str(target)
+            parts.append(f"{b.get('name', '?')} {target}".strip())
+    return "  → " + " · ".join(parts) if parts else None
+
+
+def _default_runner(cmd: list[str], cwd: str, timeout: float, emit=print) -> subprocess.CompletedProcess:
+    """Run `claude -p … --output-format stream-json`, printing what Claude does as events
+    arrive (file reads/edits), and return a CompletedProcess whose stdout is the final result
+    JSON — so summarize_agent() parses it exactly as it would the old `--output-format json`."""
+    proc = subprocess.Popen(cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    killer = threading.Timer(timeout, proc.kill)   # preserve the hard timeout the old runner had
+    killer.start()
+    final: dict | None = None
+    emit("  … Claude is working")
+    try:
+        for line in proc.stdout:                   # blocks until each event arrives
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                ev = json.loads(line)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if isinstance(ev, dict) and ev.get("type") == "result":
+                final = ev
+            else:
+                msg = _event_activity_line(ev, cwd)
+                if msg:
+                    emit(msg)
+        proc.wait()
+    finally:
+        killer.cancel()
+    stderr = proc.stderr.read() if proc.stderr else ""
+    return subprocess.CompletedProcess(cmd, proc.returncode or 0,
+                                       stdout=(json.dumps(final) if final is not None else ""),
+                                       stderr=stderr)
 
 
 def summarize_agent(user_instruction: str, cfg: SummarizeAgentConfig, meeting_id: str | None = None,
@@ -198,7 +250,9 @@ def summarize_agent(user_instruction: str, cfg: SummarizeAgentConfig, meeting_id
     try:
         out = json.loads(proc.stdout)
     except (json.JSONDecodeError, TypeError):
-        out = {"raw": proc.stdout}
+        raise SummarizeAgentError(                       # no result event ⇒ never call it success
+            "claude exited 0 but produced no result — "
+            f"{(proc.stderr or proc.stdout or '(no output)')[:300]}")
     out.setdefault("meeting_id", mid)
     out.setdefault("note", note_rel)
     return out

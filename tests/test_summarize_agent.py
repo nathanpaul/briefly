@@ -10,6 +10,8 @@ from briefly import cli
 from briefly.summarize_agent import (
     SummarizeAgentConfig,
     SummarizeAgentError,
+    _event_activity_line,
+    build_command,
     build_prompt,
     resolve_meeting_id,
     summarize_agent,
@@ -111,6 +113,33 @@ class TestSummarizeAgent(unittest.TestCase):
         self.assertIn("link people to MOCs", prompt)
         self.assertIn("Speaker_1: Hello.", prompt)
         self.assertEqual(seen["cmd"][0], "claude")
+
+    def test_build_command_uses_streaming(self):
+        cmd = build_command("PROMPT", SummarizeAgentConfig(vault_dir="/v"))
+        self.assertIn("stream-json", cmd)
+        self.assertIn("--verbose", cmd)
+
+    def test_event_activity_line_surfaces_tool_use(self):
+        ev = {"type": "assistant", "message": {"content": [
+            {"type": "text", "text": "ok"},
+            {"type": "tool_use", "name": "Write", "input": {"file_path": "/vault/meetings/x.md"}}]}}
+        self.assertEqual(_event_activity_line(ev, "/vault"), "  → Write meetings/x.md")
+
+    def test_event_activity_line_ignores_non_tools(self):
+        self.assertIsNone(_event_activity_line({"type": "result", "result": "done"}, "/vault"))
+        self.assertIsNone(_event_activity_line(
+            {"type": "assistant", "message": {"content": [{"type": "text", "text": "hi"}]}}, "/vault"))
+
+    def test_no_result_event_is_an_error(self):
+        # claude exits 0 but streamed no result → must NOT be reported as success
+        def empty_runner(cmd, cwd, timeout):
+            class P:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return P()
+        with self.assertRaises(SummarizeAgentError):
+            summarize_agent("x", self.cfg, meeting_id=MID, runner=empty_runner)
 
     def test_runner_failure_raises(self):
         def fail_runner(cmd, cwd, timeout):
