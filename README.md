@@ -88,6 +88,13 @@ briefly watch     # runs `process` on each newly captured meeting; summarize whe
 - **`briefly status [--watch]`** shows a running job's progress from another terminal.
 - **Ping when done:** opt in with `--notify` (terminal bell) or `--notify desktop` (macOS notification), or set `NOTIFY=bell`/`NOTIFY=desktop` in `.env`. Off by default.
 
+### Auto start/stop the GPU container
+Don't want the GPU box running 24/7? Set **`MANAGE_GPU_DOCKER=1`** in `.env` and `briefly process`
+will `docker compose up -d` the service before diarize/transcribe, wait for `/readyz`, then turn it
+off afterwards — and leave it alone if it was already running. For a remote box, set
+`GPU_DOCKER_CONTEXT` (a `docker context`, e.g. over SSH). Full key list (compose file, ready URL,
+timeout, `stop` vs `down`) is in [`.env.example`](.env.example).
+
 ## Requirements
 
 | | |
@@ -113,6 +120,7 @@ Real env vars and CLI flags override it.
 | `ENRICHMENT_PROMPT` | appended to the instruction when you pass `--enrich` (which notes/folders to edit) |
 | `SUMMARIZE_MODEL` | Claude model for `summarize` (default `claude-opus-4-8`) |
 | `NOTIFY` | ping when `process`/`summarize` finish — `bell` or `desktop` (default off; or per-run `--notify`) |
+| `MANAGE_GPU_DOCKER` | `1` → auto `docker compose up`/stop the GPU service around diarize/transcribe (`GPU_DOCKER_*`) |
 
 Every stage is also its own command — `briefly {capture,preprocess,diarize,transcribe,merge}` — add
 `--help` to any of them.

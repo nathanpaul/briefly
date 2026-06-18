@@ -184,42 +184,54 @@ def _stage_error_hint(e: BaseException) -> str:
 def run_pipeline(cfg: PipelineConfig, meeting_id: str, from_stage: str = "preprocess",
                  to_stage: str = "merge", force: bool = False, runners=None,
                  log=print, progress=None, tick_interval: float = 5.0,
-                 clock=time.monotonic) -> list[tuple[str, str]]:
+                 clock=time.monotonic, docker_cfg=None) -> list[tuple[str, str]]:
     """Run stages [from_stage..to_stage] for one meeting. Returns [(stage, "ok"|"skip")].
     `progress` (a ProgressReporter) is optional; when given, the heartbeat is kept current.
     Each stage shows an elapsed ticker while it runs; a failure logs an actionable line and
-    re-raises."""
+    re-raises. If MANAGE_GPU_DOCKER is set, the GPU container is started before and stopped
+    after the network stages (diarize/transcribe)."""
     runners = {**DEFAULT_RUNNERS, **(runners or {})}
     i0, i1 = STAGES.index(from_stage), STAGES.index(to_stage)
     if i0 > i1:
         raise ValueError(f"--from {from_stage} is after --to {to_stage}")
+    stage_slice = STAGES[i0:i1 + 1]
+
+    from contextlib import nullcontext
+
+    from .gpu_service import DockerServiceConfig, managed
+    dcfg = docker_cfg if docker_cfg is not None else DockerServiceConfig.from_env(cfg.whisperx_url)
+    # Only manage the GPU container when this run actually hits the network stages.
+    needs_service = dcfg.enabled and any(s in stage_slice for s in ("diarize", "transcribe"))
+    service_ctx = managed(dcfg, log=log) if needs_service else nullcontext()
+
     results: list[tuple[str, str]] = []
-    for stage in STAGES[i0:i1 + 1]:
-        if not force and DONE[stage](cfg, meeting_id):
-            log(f"skip  {stage} (already done)")
+    with service_ctx:
+        for stage in stage_slice:
+            if not force and DONE[stage](cfg, meeting_id):
+                log(f"skip  {stage} (already done)")
+                if progress:
+                    progress.done(stage)
+                results.append((stage, "skip"))
+                continue
+            log(f"run   {stage} ...")
             if progress:
-                progress.done(stage)
-            results.append((stage, "skip"))
-            continue
-        log(f"run   {stage} ...")
-        if progress:
-            progress.stage(stage)
-        cb, is_tty = _make_ticker(stage, log, progress)
-        t0 = clock()
-        try:
-            _run_stage(lambda: runners[stage](cfg, meeting_id, progress),
-                       on_tick=cb, interval=tick_interval, clock=clock)
-        except Exception as e:
+                progress.stage(stage)
+            cb, is_tty = _make_ticker(stage, log, progress)
+            t0 = clock()
+            try:
+                _run_stage(lambda: runners[stage](cfg, meeting_id, progress),
+                           on_tick=cb, interval=tick_interval, clock=clock)
+            except Exception as e:
+                if is_tty:
+                    sys.stdout.write("\r\033[K")
+                log(f"✗ {stage} failed after {clock() - t0:.1f}s — {_stage_error_hint(e)}")
+                raise
             if is_tty:
                 sys.stdout.write("\r\033[K")
-            log(f"✗ {stage} failed after {clock() - t0:.1f}s — {_stage_error_hint(e)}")
-            raise
-        if is_tty:
-            sys.stdout.write("\r\033[K")
-        if progress:
-            progress.done(stage)
-        log(f"ok    {stage}  ({clock() - t0:.1f}s)")
-        results.append((stage, "ok"))
+            if progress:
+                progress.done(stage)
+            log(f"ok    {stage}  ({clock() - t0:.1f}s)")
+            results.append((stage, "ok"))
     return results
 
 
